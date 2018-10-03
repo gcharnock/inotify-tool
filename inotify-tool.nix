@@ -4,8 +4,9 @@ let
 
   inherit (nixpkgs) pkgs;
 
-  f = { mkDerivation, base, bytestring, directory, filepath
-      , hinotify, interpolate, stdenv, text, utf8-string
+  f = { mkDerivation, base, bytestring, cryptonite, directory
+      , filepath, hinotify, interpolate, memory, rawfilepath, stdenv
+      , text, utf8-string
       }:
       mkDerivation {
         pname = "inotify-tool";
@@ -14,10 +15,11 @@ let
         isLibrary = false;
         isExecutable = true;
         executableHaskellDepends = [
-          base bytestring directory filepath hinotify interpolate text
-          utf8-string
+          base bytestring cryptonite directory filepath hinotify interpolate
+          memory rawfilepath text utf8-string
         ];
-        license = stdenv.lib.licenses.bsd3;
+        license = stdenv.lib.licenses.unfree;
+        hydraPlatforms = stdenv.lib.platforms.none;
       };
 
   haskellPackages = if compiler == "default"

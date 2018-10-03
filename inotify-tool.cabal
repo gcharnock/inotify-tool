@@ -5,7 +5,7 @@ name:                inotify-tool
 version:             0.1.0.0
 -- synopsis:
 -- description:
-license:             BSD3
+-- Baselicense:             BSD3
 license-file:        LICENSE
 -- author:
 -- maintainer:
@@ -15,7 +15,7 @@ build-type:          Simple
 extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
-executable intoify-tool
+executable inotify-tool
   main-is:             Main.hs
   -- other-modules:
   default-extensions:  OverloadedStrings,
@@ -29,6 +29,9 @@ executable intoify-tool
                        bytestring,
                        interpolate,
                        filepath,
-                       utf8-string
+                       utf8-string,
+                       memory,
+                       cryptonite,
+                       rawfilepath
   hs-source-dirs:      src
   default-language:    Haskell2010
