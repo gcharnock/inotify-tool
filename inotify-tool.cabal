@@ -18,14 +18,17 @@ cabal-version:       >=1.10
 executable intoify-tool
   main-is:             Main.hs
   -- other-modules:
-  extensions:  OverloadedStrings,
-               QuasiQuotes,
-               LambdaCase
+  default-extensions:  OverloadedStrings,
+                       QuasiQuotes,
+                       LambdaCase,
+                       NamedFieldPuns
   build-depends:       base >=4.11 && <4.12,
                        hinotify,
                        directory,
                        text,
+                       bytestring,
                        interpolate,
-                       filepath
+                       filepath,
+                       utf8-string
   hs-source-dirs:      src
   default-language:    Haskell2010
