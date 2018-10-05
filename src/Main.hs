@@ -70,15 +70,16 @@ watchRegularFile filePath = do
   fileHash <- liftIO $ sha256File filePath
   liftIO $ T.putStrLn [i|watching regular file #{filePath} - #{fileHash}|]
   Context { cntxINotify } <- ask
-  liftIO $ addWatch cntxINotify watchTypes filePath $ \event -> do
-    toIO $ handleEvent event
+  withRunInIO $ \runInIO -> 
+    addWatch cntxINotify watchTypes filePath (\event -> (runInIO $ handleEvent event))
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete]
 
 watchDirectory :: RawFilePath -> App WatchDescriptor
 watchDirectory filePath = do
   liftIO $ T.putStrLn [i|watching directory #{filePath}|]
   Context { cntxINotify } <- ask
-  liftIO $ addWatch cntxINotify watchTypes filePath (withUnliftIO $ \run -> run handleEvent)
+  withRunInIO $ \ runInIO ->
+    addWatch cntxINotify watchTypes filePath (\event -> runInIO $ handleEvent event)
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create, Delete]
 
 performInitialDirectorySweep :: RawFilePath -> App ()
