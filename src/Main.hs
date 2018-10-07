@@ -1,11 +1,13 @@
 module Main where
 
+import UnliftIO.Async
 import Control.Monad.IO.Class
 import qualified System.FilePath               as FP
 import qualified Data.ByteString.UTF8          as UTF8
-import qualified Data.ByteString.RawFilePath   as RBS
+import qualified Data.ByteString.RawFilePath   as RFP
 import           RawFilePath
-import qualified Data.ByteString               as BS
+import qualified Data.ByteString               as BS hiding (putStrLn)
+import qualified Data.ByteString.Char8         as BS
 import           Data.String.Interpolate.IsString
 import           Control.Monad
 import           System.INotify
@@ -23,91 +25,160 @@ import           Data.ByteArray.Encoding        ( convertToBase
 import Control.Monad.Trans.Reader
 import qualified Data.HashTable.IO             as H
 import Control.Monad.IO.Unlift
+import Data.Hashable
+import Data.ByteArray
 
 type HashTable k v = H.BasicHashTable k v
+newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
+  deriving (Show, Eq)
+
+instance Hashable FileHash where
+  hashWithSalt salt (FileHash a) = hashWithSalt salt $ (convert a :: BS.ByteString)
+
+data TreeContent = ContentFile FileHash | ContentTree Tree
+
+newtype Tree = Tree { unTree :: HashTable RawFilePath TreeContent } deriving (Show)
 
 data Context = Context {
   cntxINotify :: INotify,
-  cntxObjectStore :: HashTable (Digest SHA256) BS.ByteString
+  cntxObjectStore :: HashTable FileHash BS.ByteString,
+  cntxRootTree :: Tree
 }
 
 type App a = ReaderT Context IO a
-
-
-data Tree = Tree {
-  treeFilename :: RawFilePath,
-  treeSha256Hash :: HashTable RawFilePath (Digest SHA256)
-} deriving (Show)
 
 infixr 5 </>
 
 (</>) :: RawFilePath -> RawFilePath -> RawFilePath
 a </> b = UTF8.fromString $ (UTF8.toString a) FP.</> (UTF8.toString b)
 
-renderSha256 :: Digest SHA256 -> BS.ByteString
-renderSha256 = convertToBase Base16
+renderFileHash :: FileHash -> BS.ByteString
+renderFileHash = convertToBase Base64 . unFileHash
 
 sha256File :: MonadIO m => RawFilePath -> m (Digest SHA256)
 sha256File filepath = do
-  fileBytes <- liftIO $ RBS.readFile filepath
+  fileBytes <- liftIO $ RFP.readFile filepath
   return $ hashWith SHA256 fileBytes
 
-handleEvent :: Event -> App ()
-handleEvent event = do
+info :: T.Text -> App ()
+info = liftIO . T.putStrLn
+
+store :: FileHash -> BS.ByteString -> App ()
+store hash contents = do
+  Context { cntxObjectStore } <- ask
+  liftIO $ H.insert cntxObjectStore hash contents
+
+retrive :: FileHash -> App BS.ByteString
+retrive hash = do
+  Context { cntxObjectStore } <- ask
+  liftIO $ H.lookup cntxObjectStore hash >>= \case
+    Nothing -> error "ERROR: Could not find hash"
+    Just contents -> return contents
+
+handleEvent :: Tree -> Event -> App ()
+handleEvent workingTree event = do
   liftIO $ print event
   case event of
     event@Created { isDirectory, filePath } -> do
       if isDirectory
         then do
-          watchDirectory filePath
-          performInitialDirectorySweep filePath
-        else void $ watchRegularFile filePath
-      liftIO $ print event
-    event -> liftIO $ print event
+          watchDirectory workingTree filePath
+          performInitialDirectorySweep workingTree filePath
+        else return () -- not sure we need to do anything here (?)
+    event@Modified { isDirectory, maybeFilePath } -> do
+      case maybeFilePath of
+        Nothing -> info [i|UNHANDLED: maybeFilePath was nothing|]
+        Just filePath -> do
+          fileBytes <- liftIO $ RFP.readFile filePath
+          let fileHash = FileHash $ hashWith SHA256 fileBytes
+          info [i|STORE: #{renderFileHash fileHash} #{filePath}|]
+          store fileHash fileBytes
+          liftIO $ H.insert (unTree workingTree) filePath (ContentFile fileHash)
+    event -> return ()
 
-watchRegularFile :: RawFilePath -> App WatchDescriptor
-watchRegularFile filePath = do
-  fileHash <- liftIO $ sha256File filePath
-  liftIO $ T.putStrLn [i|watching regular file #{filePath} - #{fileHash}|]
+watchRegularFile :: Tree -> RawFilePath -> App WatchDescriptor
+watchRegularFile workingTree filePath = do
+  info [i|watching regular file #{filePath}|]
   Context { cntxINotify } <- ask
   withRunInIO $ \runInIO -> 
-    addWatch cntxINotify watchTypes filePath (\event -> (runInIO $ handleEvent event))
+    addWatch cntxINotify watchTypes filePath (\event -> (runInIO $ handleEvent workingTree event))
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete]
 
-watchDirectory :: RawFilePath -> App WatchDescriptor
-watchDirectory filePath = do
+watchDirectory :: Tree -> RawFilePath -> App WatchDescriptor
+watchDirectory workingTree filePath = do
   liftIO $ T.putStrLn [i|watching directory #{filePath}|]
   Context { cntxINotify } <- ask
   withRunInIO $ \ runInIO ->
-    addWatch cntxINotify watchTypes filePath (\event -> runInIO $ handleEvent event)
+    addWatch cntxINotify watchTypes filePath (\event -> runInIO $ handleEvent workingTree event)
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create, Delete]
 
-performInitialDirectorySweep :: RawFilePath -> App ()
-performInitialDirectorySweep thisDir = do
+performInitialDirectorySweep :: Tree -> RawFilePath -> App ()
+performInitialDirectorySweep workingTree thisDir = do
   Context { cntxINotify = inotify } <- ask
-  liftIO $ BS.putStrLn $ "scanning " <> thisDir <> ""
+
+  liftIO $ BS.putStrLn $ "SCAN " <> thisDir <> ""
+
   files <- liftIO $ listDirectory thisDir
+
   forM_ files $ \file -> do
-    let filepath = (thisDir </> file)
-    liftIO (doesDirectoryExist filepath) >>= \case
-      False -> do
-        void $ watchRegularFile filepath
-      True -> do
-        watchDirectory filepath
-        performInitialDirectorySweep filepath
+    let filepath = thisDir </> file
+    isDirectory <- liftIO $ doesDirectoryExist filepath
+    if isDirectory
+      then do
+        tree <- liftIO $ fmap Tree H.new
+        watchDirectory workingTree filepath
 
+        liftIO $ H.insert (unTree workingTree) filepath (ContentTree tree)
 
-watch :: App ()
-watch = do
-  performInitialDirectorySweep "."
+        performInitialDirectorySweep tree filepath
+      else do
+        fileBytes <- liftIO $ RFP.readFile filepath
+        let fileHash = FileHash $ hashWith SHA256 fileBytes
+        liftIO $ T.putStrLn [i|STORE: #{renderFileHash fileHash} #{filepath}|]
+        store fileHash fileBytes
+
+        liftIO $ H.insert (unTree workingTree) filepath (ContentFile fileHash)
+
+        --void $ watchRegularFile filepath
+
+writeOutTree :: RawFilePath -> Tree -> App ()
+writeOutTree filepath tree = withRunInIO $ \runInIO ->
+  flip H.mapM_ (unTree tree) $ \(filePath, contents) ->
+    case contents of
+      ContentFile fileHash -> runInIO $ do
+        liftIO $ T.putStrLn [i|OUTPUT: #{filepath </> filePath}, #{renderFileHash fileHash}|]
+
+        contents <- retrive fileHash
+      
+        liftIO $ RFP.writeFile filepath contents
+      ContentTree subTree -> return ()
+
+    
+
+testOutputLoop :: RawFilePath -> App ()
+testOutputLoop filepath = do
+  liftIO $ threadDelay $ 1000 * 1000
+  Context { cntxRootTree } <- ask
+  writeOutTree filepath cntxRootTree
+  testOutputLoop filepath
+
+runApp :: App ()
+runApp = do
+  async $ testOutputLoop "/tmp/inotify-tool-test"
+
+  Context { cntxRootTree } <- ask
+
+  performInitialDirectorySweep cntxRootTree "."
   liftIO $ threadDelay $ 1000 * 1000 * 1000 * 1000
   return ()
 
 main :: IO ()
 main = do
   objectStore <- H.new
+  rootTree <- fmap Tree H.new
   withINotify $ \inotify -> do
-    runReaderT watch (Context {
+    runReaderT runApp (Context {
       cntxINotify = inotify,
-      cntxObjectStore = objectStore
+      cntxObjectStore = objectStore,
+      cntxRootTree = rootTree
     })

@@ -1,5 +1,2 @@
-let
-  pkgs = import <nixpkgs> { };
-
-in
-  pkgs.haskellPackages.callPackage ./inotify-tool.nix { }
+{ hspkgs ? (import <nixpkgs> { }).haskellPackages }:
+hspkgs.callPackage ./inotify-tool.nix { }
