@@ -1,5 +1,6 @@
 module Main where
 
+import UnliftIO.Exception
 import UnliftIO.Async
 import Control.Monad.IO.Class
 import qualified System.FilePath               as FP
@@ -142,25 +143,29 @@ performInitialDirectorySweep workingTree thisDir = do
         --void $ watchRegularFile filepath
 
 writeOutTree :: RawFilePath -> Tree -> App ()
-writeOutTree filepath tree = withRunInIO $ \runInIO ->
-  flip H.mapM_ (unTree tree) $ \(filePath, contents) ->
+writeOutTree dirPath tree = withRunInIO $ \runInIO ->
+  flip H.mapM_ (unTree tree) $ \(filename, contents) ->
     case contents of
       ContentFile fileHash -> runInIO $ do
-        liftIO $ T.putStrLn [i|OUTPUT: #{filepath </> filePath}, #{renderFileHash fileHash}|]
+        let fullFilePath = dirPath </> filename
 
         contents <- retrive fileHash
       
-        liftIO $ RFP.writeFile filepath contents
+        liftIO $ T.putStrLn [i|OUTPUT: #{fullFilePath}, #{renderFileHash fileHash}|]
+        liftIO $ RFP.writeFile fullFilePath contents
       ContentTree subTree -> return ()
 
     
 
 testOutputLoop :: RawFilePath -> App ()
-testOutputLoop filepath = do
-  liftIO $ threadDelay $ 1000 * 1000
-  Context { cntxRootTree } <- ask
-  writeOutTree filepath cntxRootTree
-  testOutputLoop filepath
+testOutputLoop filepath = catch inner $ \e -> liftIO $ do
+    putStrLn "ERROR:"
+    print (e :: SomeException)
+  where inner = do
+          liftIO $ threadDelay $ 1000 * 1000 * 10
+          Context { cntxRootTree } <- ask
+          writeOutTree filepath cntxRootTree
+          testOutputLoop filepath
 
 runApp :: App ()
 runApp = do
