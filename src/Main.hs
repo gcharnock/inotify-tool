@@ -6,6 +6,7 @@ import Control.Monad.IO.Class
 import qualified System.FilePath               as FP
 import qualified Data.ByteString.UTF8          as UTF8
 import qualified Data.ByteString.RawFilePath   as RFP
+import RawFilePath.Directory
 import           RawFilePath
 import qualified Data.ByteString               as BS hiding (putStrLn)
 import qualified Data.ByteString.Char8         as BS
@@ -61,7 +62,7 @@ sha256File filepath = do
   fileBytes <- liftIO $ RFP.readFile filepath
   return $ hashWith SHA256 fileBytes
 
-info :: T.Text -> App ()
+info :: MonadIO m => T.Text -> m ()
 info = liftIO . T.putStrLn
 
 store :: FileHash -> BS.ByteString -> App ()
@@ -135,25 +136,26 @@ performInitialDirectorySweep workingTree thisDir = do
       else do
         fileBytes <- liftIO $ RFP.readFile filepath
         let fileHash = FileHash $ hashWith SHA256 fileBytes
-        liftIO $ T.putStrLn [i|STORE: #{renderFileHash fileHash} #{filepath}|]
+        liftIO $ T.putStrLn [i|STORE: #{renderFileHash fileHash} #{file} (from #{thisDir}) |]
         store fileHash fileBytes
 
-        liftIO $ H.insert (unTree workingTree) filepath (ContentFile fileHash)
+        liftIO $ H.insert (unTree workingTree) file (ContentFile fileHash)
 
         --void $ watchRegularFile filepath
 
 writeOutTree :: RawFilePath -> Tree -> App ()
-writeOutTree dirPath tree = withRunInIO $ \runInIO ->
-  flip H.mapM_ (unTree tree) $ \(filename, contents) ->
+writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
+  info [i|whiteOutTree: dirPath: #{dirPath}|]
+  flip H.mapM_ (unTree tree) $ \(filename, contents) -> runInIO $ do
+    let fullFilePath = dirPath </> filename
     case contents of
-      ContentFile fileHash -> runInIO $ do
-        let fullFilePath = dirPath </> filename
-
+      ContentFile fileHash -> do
         contents <- retrive fileHash
-      
-        liftIO $ T.putStrLn [i|OUTPUT: #{fullFilePath}, #{renderFileHash fileHash}|]
+        info [i|OUTPUT: #{fullFilePath}, #{renderFileHash fileHash}|]
         liftIO $ RFP.writeFile fullFilePath contents
-      ContentTree subTree -> return ()
+      ContentTree subTree -> do
+        liftIO $ createDirectoryIfMissing True fullFilePath
+        writeOutTree fullFilePath subTree
 
     
 
@@ -164,6 +166,8 @@ testOutputLoop filepath = catch inner $ \e -> liftIO $ do
   where inner = do
           liftIO $ threadDelay $ 1000 * 1000 * 10
           Context { cntxRootTree } <- ask
+          liftIO $ createDirectoryIfMissing True filepath
+          info [i|The tree: #{cntxRootTree}|]
           writeOutTree filepath cntxRootTree
           testOutputLoop filepath
 
