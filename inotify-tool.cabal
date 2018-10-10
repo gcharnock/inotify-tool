@@ -19,11 +19,11 @@ executable inotify-tool
   main-is:             Main.hs
   -- other-modules:
   default-extensions:  OverloadedStrings,
-                       QuasiQuotes,
+                       --QuasiQuotes,
                        LambdaCase,
                        NamedFieldPuns,
                        GeneralizedNewtypeDeriving
-  build-depends:       base >=4.11 && <4.12,
+  build-depends:       base >=4.10 && <4.12,
                        hinotify,
                        directory,
                        text,
