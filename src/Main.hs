@@ -96,16 +96,16 @@ handleEvent workingTree event = do
     event@Modified { isDirectory, maybeFilePath } -> do
       case maybeFilePath of
         Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
-        Just filePath -> do
-          fileBytes <- liftIO $ RFP.readFile filePath
+        Just filename -> do
+          fileBytes <- liftIO $ RFP.readFile filename
           let fileHash = FileHash $ hashWith SHA256 fileBytes
           info
             $  "STORE: "
             <> renderFileHash fileHash
             <> " "
-            <> T.decodeUtf8 filePath
+            <> T.decodeUtf8 filename
           store fileHash fileBytes
-          liftIO $ H.insert (unTree workingTree) filePath (ContentFile fileHash)
+          liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
     event -> return ()
 
 watchRegularFile :: Tree -> RawFilePath -> App WatchDescriptor
@@ -138,15 +138,15 @@ performInitialDirectorySweep workingTree thisDir = do
 
   files <- liftIO $ listDirectory thisDir
 
-  forM_ files $ \file -> do
-    let filepath = thisDir </> file
+  forM_ files $ \filename -> do
+    let filepath = thisDir </> filename
     isDirectory <- liftIO $ doesDirectoryExist filepath
     if isDirectory
       then do
         tree <- liftIO $ fmap Tree H.new
         watchDirectory workingTree filepath
 
-        liftIO $ H.insert (unTree workingTree) filepath (ContentTree tree)
+        liftIO $ H.insert (unTree workingTree) filename (ContentTree tree)
 
         performInitialDirectorySweep tree filepath
       else do
@@ -155,12 +155,13 @@ performInitialDirectorySweep workingTree thisDir = do
         info
           $  "STORE: "
           <> renderFileHash fileHash
-          <> T.decodeUtf8 file
+          <> " "
+          <> T.decodeUtf8 filename
           <> " from "
           <> T.decodeUtf8 thisDir
         store fileHash fileBytes
 
-        liftIO $ H.insert (unTree workingTree) file (ContentFile fileHash)
+        liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
 
         --void $ watchRegularFile filepath
 
