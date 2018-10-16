@@ -1,7 +1,7 @@
-{ mkDerivation, base, bytestring, cryptonite, directory, filepath
-, hashable, hashtables, hinotify, interpolate, memory, mtl, network
-, pipes-network, rawfilepath, stdenv, streamly, text, transformers
-, unliftio, unliftio-core, utf8-string
+{ mkDerivation, aeson, base, bytestring, cryptonite, directory
+, filepath, hashable, hashtables, hinotify, interpolate, memory
+, mtl, network, optparse-applicative, rawfilepath, stdenv, text
+, transformers, unliftio, unliftio-core, utf8-string
 }:
 mkDerivation {
   pname = "inotify-tool";
@@ -10,9 +10,10 @@ mkDerivation {
   isLibrary = false;
   isExecutable = true;
   executableHaskellDepends = [
-    base bytestring cryptonite directory filepath hashable hashtables
-    hinotify interpolate memory mtl network pipes-network rawfilepath
-    streamly text transformers unliftio unliftio-core utf8-string
+    aeson base bytestring cryptonite directory filepath hashable
+    hashtables hinotify interpolate memory mtl network
+    optparse-applicative rawfilepath text transformers unliftio
+    unliftio-core utf8-string
   ];
   license = stdenv.lib.licenses.unfree;
   hydraPlatforms = stdenv.lib.platforms.none;
