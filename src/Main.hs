@@ -1,8 +1,8 @@
 module Main where
 
-import qualified System.Directory as Sys
+import qualified System.Directory              as Sys
 import           Data.Monoid
-import System.IO
+import           System.IO
 import           UnliftIO.Exception
 import           UnliftIO.Async
 import           Control.Monad.IO.Class
@@ -12,7 +12,10 @@ import qualified Data.ByteString.RawFilePath   as RFP
 import           RawFilePath.Directory
 import           RawFilePath
 import qualified Data.ByteString               as BS
-                                         hiding ( putStrLn, unpack, pack )
+                                         hiding ( putStrLn
+                                                , unpack
+                                                , pack
+                                                )
 import qualified Data.ByteString.Char8         as BS
 import           Data.String.Interpolate.IsString
 import           Control.Monad
@@ -33,7 +36,7 @@ import qualified Data.HashTable.IO             as H
 import           Control.Monad.IO.Unlift
 import           Data.Hashable
 import           Data.ByteArray
-import Network
+import           Network.Socket
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -83,11 +86,7 @@ storeFile :: Tree -> RawFilePath -> App ()
 storeFile workingTree filename = do
   fileBytes <- liftIO $ RFP.readFile filename
   let fileHash = FileHash $ hashWith SHA256 fileBytes
-  info
-    $  "STORE: "
-    <> renderFileHash fileHash
-    <> " "
-    <> T.decodeUtf8 filename
+  info $ "STORE: " <> renderFileHash fileHash <> " " <> T.decodeUtf8 filename
   store fileHash fileBytes
   liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
 
@@ -111,18 +110,15 @@ handleEvent :: Tree -> Event -> App ()
 handleEvent workingTree event = do
   liftIO $ print event
   case event of
-    event@Created { isDirectory, filePath } ->
-      if isDirectory
-        then do
-          watchDirectory workingTree filePath
-          performInitialDirectorySweep workingTree filePath
-        else
-          storeFile workingTree filePath
+    event@Created { isDirectory, filePath } -> if isDirectory
+      then do
+        watchDirectory workingTree filePath
+        performInitialDirectorySweep workingTree filePath
+      else storeFile workingTree filePath
 
-    event@Modified { isDirectory, maybeFilePath } -> 
-      case maybeFilePath of
-        Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
-        Just filename -> storeFile workingTree filename
+    event@Modified { isDirectory, maybeFilePath } -> case maybeFilePath of
+      Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
+      Just filename -> storeFile workingTree filename
 
     event@Deleted { isDirectory, filePath } -> if isDirectory
       then error "UNHANDLED: not sure what to do"
@@ -219,14 +215,17 @@ runDirectoryMonitoringBit = do
 
 main :: IO ()
 main = do
-  socket <- listenOn $ UnixSocket "/tmp/mysock"
+  sock <- socket AF_UNIX SeqPacket defaultProtocol
+  bind sock $ SockAddrUnix "/tmp/mysock"
+  listen sock 5
   forever $ do
     putStrLn "waiting to accept"
-    (handle, _, _) <- accept socket
+    (sock', _) <- accept sock
     putStrLn $ "got connection"
     async $ do
       putStrLn "in read thread"
-      _ <- hWaitForInput handle (-1)
+      handle <- socketToHandle sock' ReadMode
+      _       <- hWaitForInput handle (-1)
       recived <- hGetContents handle
       putStrLn recived
 

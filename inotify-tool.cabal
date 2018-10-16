@@ -23,19 +23,22 @@ executable cli
                        --QuasiQuotes,
                        LambdaCase,
                        NamedFieldPuns,
+                       DeriveGeneric,
                        GeneralizedNewtypeDeriving
   build-depends:       base >=4.10 && <4.12,
                        optparse-applicative,
                        text,
                        bytestring,
-                       aeson
+                       aeson,
+                       network
 
-executable inotify-tool
+executable daemon
   main-is:             Main.hs
   -- other-modules:
   default-extensions:  OverloadedStrings,
                        --QuasiQuotes,
                        LambdaCase,
+                       DeriveGeneric,
                        NamedFieldPuns,
                        GeneralizedNewtypeDeriving
   build-depends:       base >=4.10 && <4.12,
