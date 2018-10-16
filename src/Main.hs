@@ -2,6 +2,7 @@ module Main where
 
 import qualified System.Directory as Sys
 import           Data.Monoid
+import System.IO
 import           UnliftIO.Exception
 import           UnliftIO.Async
 import           Control.Monad.IO.Class
@@ -32,6 +33,7 @@ import qualified Data.HashTable.IO             as H
 import           Control.Monad.IO.Unlift
 import           Data.Hashable
 import           Data.ByteArray
+import Network
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -201,8 +203,8 @@ runApp = do
   liftIO $ threadDelay $ 1000 * 1000 * 1000 * 1000
   return ()
 
-main :: IO ()
-main = do
+runDirectoryMonitoringBit :: IO ()
+runDirectoryMonitoringBit = do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
   withINotify $ \inotify -> runReaderT
@@ -213,3 +215,18 @@ main = do
       , cntxRootTree    = rootTree
       }
     )
+
+
+main :: IO ()
+main = do
+  socket <- listenOn $ UnixSocket "/tmp/mysock"
+  forever $ do
+    putStrLn "waiting to accept"
+    (handle, _, _) <- accept socket
+    putStrLn $ "got connection"
+    async $ do
+      putStrLn "in read thread"
+      _ <- hWaitForInput handle (-1)
+      recived <- hGetContents handle
+      putStrLn recived
+

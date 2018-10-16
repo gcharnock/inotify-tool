@@ -39,6 +39,11 @@ executable inotify-tool
                        mtl,
                        unliftio,
                        unliftio-core,
-                       hashable
+                       hashable,
+                       network,
+                       pipes-network,
+                       streamly
+
+
   hs-source-dirs:      src
   default-language:    Haskell2010
