@@ -7,13 +7,18 @@ import           UnliftIO.Exception
 import           UnliftIO.Async
 import           Control.Monad.IO.Class
 import qualified System.FilePath               as FP
-import qualified Data.ByteString               as BS hiding (hPutStrLn, putStrLn, unpack, pack)
+import qualified Data.ByteString               as BS
+                                         hiding ( hPutStrLn
+                                                , putStrLn
+                                                , unpack
+                                                , pack
+                                                )
 import qualified Data.ByteString.UTF8          as UTF8
-import qualified Data.ByteString.RawFilePath   as RFP hiding (putStrLn)
+import qualified Data.ByteString.RawFilePath   as RFP
+                                         hiding ( putStrLn )
 import qualified Data.ByteString.Char8         as BS
 import           RawFilePath.Directory
-import           RawFilePath
-                                         hiding ( putStrLn
+import           RawFilePath             hiding ( putStrLn
                                                 , unpack
                                                 , pack
                                                 )
@@ -37,6 +42,8 @@ import           Control.Monad.IO.Unlift
 import           Data.Hashable
 import           Data.ByteArray
 import           Network.Socket
+import           Data.Aeson
+import           LibWormhole                    ( Cmd(TreeCmd) )
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -58,7 +65,13 @@ data Context = Context {
   cntxRootTree :: Tree
 }
 
-type App a = ReaderT Context IO a
+newtype App = App (ReaderT Context IO)
+
+data UserReqContext = UserReqContext {
+  ucntxHandle :: Handle
+}
+
+newtype UserRequest a = ReaderT UserReqContext App a
 
 infixr 5 </>
 
@@ -199,6 +212,30 @@ runApp = do
   liftIO $ threadDelay $ 1000 * 1000 * 1000 * 1000
   return ()
 
+
+sendToUser :: BS.ByteString -> UserRequest ()
+sendToUser message = do
+  UserReqContext { ucntxHandle } <- ask
+  BS.hPutStrLn message
+
+processMessage :: Cmd -> UserRequest ()
+processMessage TreeCmd = do
+  sendToUser "Printing out directory tree"
+
+clientSocketThread :: Socket -> IO ()
+clientSocketThread sock = do
+  putStrLn "in read thread"
+  handle <- socketToHandle sock ReadWriteMode
+  BS.hPutStrLn handle "Hello, you have connected to the socket"
+  _       <- hWaitForInput handle (-1)
+  recived <- BS.hGetContents handle
+  let eitherMSG = eitherDecodeStrict recived
+  case eitherMSG of
+    Right _ -> do
+      BS.putStrLn $ "was not JSON" <> recived
+    Left msg -> processMessage msg
+
+
 runDirectoryMonitoringBit :: IO ()
 runDirectoryMonitoringBit = do
   objectStore <- H.new
@@ -212,19 +249,10 @@ runDirectoryMonitoringBit = do
       }
     )
 
-clientSocketThread :: Socket -> IO ()
-clientSocketThread sock = do
-  putStrLn "in read thread"
-  handle <- socketToHandle sock ReadWriteMode
-  BS.hPutStrLn handle "Hello, you have connected to the socket"
-  _       <- hWaitForInput handle (-1)
-  recived <- hGetContents handle
-  putStrLn recived
-
-
 
 main :: IO ()
-main =
+main = do
+  tryRemoveFile "/tmp/mysock"
   bracket (socket AF_UNIX SeqPacket defaultProtocol) close $ \sock -> do
     bind sock $ SockAddrUnix "/tmp/mysock"
     listen sock 5

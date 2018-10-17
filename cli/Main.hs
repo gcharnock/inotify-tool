@@ -18,11 +18,8 @@ import           Network.Socket                 ( socket
 import           Network.Socket.ByteString.Lazy (send, recv)
 import           Control.Exception
 import UnliftIO.Async
+import LibWormhole
 
-data Cmd = TreeCmd deriving (Show, Generic)
-
-instance FromJSON Cmd
-instance ToJSON Cmd
 
 postMessage :: Socket -> Cmd -> IO ()
 postMessage sock msg = do
