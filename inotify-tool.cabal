@@ -30,8 +30,9 @@ executable cli
                        text,
                        bytestring,
                        aeson,
-                       network
-
+                       network,
+                       unliftio,
+                       unliftio-core
 executable daemon
   main-is:             Main.hs
   -- other-modules:

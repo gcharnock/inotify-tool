@@ -7,16 +7,16 @@ import           UnliftIO.Exception
 import           UnliftIO.Async
 import           Control.Monad.IO.Class
 import qualified System.FilePath               as FP
+import qualified Data.ByteString               as BS hiding (hPutStrLn, putStrLn, unpack, pack)
 import qualified Data.ByteString.UTF8          as UTF8
-import qualified Data.ByteString.RawFilePath   as RFP
+import qualified Data.ByteString.RawFilePath   as RFP hiding (putStrLn)
+import qualified Data.ByteString.Char8         as BS
 import           RawFilePath.Directory
 import           RawFilePath
-import qualified Data.ByteString               as BS
                                          hiding ( putStrLn
                                                 , unpack
                                                 , pack
                                                 )
-import qualified Data.ByteString.Char8         as BS
 import           Data.String.Interpolate.IsString
 import           Control.Monad
 import qualified Data.Text                     as T
@@ -212,20 +212,24 @@ runDirectoryMonitoringBit = do
       }
     )
 
+clientSocketThread :: Socket -> IO ()
+clientSocketThread sock = do
+  putStrLn "in read thread"
+  handle <- socketToHandle sock ReadWriteMode
+  BS.hPutStrLn handle "Hello, you have connected to the socket"
+  _       <- hWaitForInput handle (-1)
+  recived <- hGetContents handle
+  putStrLn recived
+
+
 
 main :: IO ()
-main = do
-  sock <- socket AF_UNIX SeqPacket defaultProtocol
-  bind sock $ SockAddrUnix "/tmp/mysock"
-  listen sock 5
-  forever $ do
-    putStrLn "waiting to accept"
-    (sock', _) <- accept sock
-    putStrLn $ "got connection"
-    async $ do
-      putStrLn "in read thread"
-      handle <- socketToHandle sock' ReadMode
-      _       <- hWaitForInput handle (-1)
-      recived <- hGetContents handle
-      putStrLn recived
-
+main =
+  bracket (socket AF_UNIX SeqPacket defaultProtocol) close $ \sock -> do
+    bind sock $ SockAddrUnix "/tmp/mysock"
+    listen sock 5
+    forever $ do
+      putStrLn "waiting to accept"
+      (sock', _) <- accept sock
+      putStrLn $ "got connection"
+      async $ clientSocketThread sock'
