@@ -224,8 +224,10 @@ main = do
     putStrLn $ "got connection"
     async $ do
       putStrLn "in read thread"
-      handle <- socketToHandle sock' ReadMode
+      handle <- socketToHandle sock' ReadWriteMode
+      hPutStr handle "hello"
       _       <- hWaitForInput handle (-1)
       recived <- hGetContents handle
       putStrLn recived
+      hPutStr handle "Some response text"
 
