@@ -103,14 +103,7 @@ storeFile workingTree filename = do
   store fileHash fileBytes
   liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
 
-storeDirectory :: Tree -> RawFilePath -> RawFilePath -> App ()
-storeDirectory workingTree dirname filename = do
-  watchDirectory workingTree (dirname </> filename)
 
-  tree <- liftIO $ fmap Tree H.new
-  liftIO $ H.insert (unTree workingTree) filename (ContentTree tree)
-
-  performInitialDirectorySweep tree (dirname </> filename)
 
 retrive :: FileHash -> App BS.ByteString
 retrive hash = do
@@ -119,27 +112,31 @@ retrive hash = do
     Nothing       -> error "ERROR: Could not find hash"
     Just contents -> return contents
 
-handleEvent :: Tree -> Event -> App ()
-handleEvent workingTree event = do
-  liftIO $ print event
-  case event of
-    event@Created { isDirectory, filePath } -> if isDirectory
-      then do
-        watchDirectory workingTree filePath
-        performInitialDirectorySweep workingTree filePath
-      else storeFile workingTree filePath
+handleEvent :: Tree -> RawFilePath -> Event -> App ()
+handleEvent workingTree dirPath event = try handler >>= \case
+  Left  e -> liftIO $ print (e :: SomeException)
+  Right _ -> return ()
+ where
+  handler = do
+    liftIO $ print event
+    case event of
+      Created { isDirectory, filePath = filename } -> do
+        let filepath = dirPath </> filename
+        if isDirectory
+          then do
+            newWorkingTree <- liftIO $ Tree <$> H.new
+            performInitialDirectorySweep newWorkingTree filepath 
+          else storeFile workingTree filepath
 
-    event@Modified { isDirectory, maybeFilePath } -> case maybeFilePath of
-      Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
-      Just filename -> storeFile workingTree filename
+      Modified { isDirectory, maybeFilePath } -> case maybeFilePath of
+        Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
+        Just filename -> storeFile workingTree (dirPath </> filename)
 
-    event@Deleted { isDirectory, filePath } -> if isDirectory
-      then error "UNHANDLED: not sure what to do"
-      else do
+      Deleted { isDirectory, filePath } -> do
         info $ "REMOVE: " <> T.decodeUtf8 filePath
         liftIO $ H.delete (unTree workingTree) filePath
 
-    event -> return ()
+      _ -> return ()
 
 watchDirectory :: Tree -> RawFilePath -> App WatchDescriptor
 watchDirectory workingTree filePath = do
@@ -149,8 +146,8 @@ watchDirectory workingTree filePath = do
     cntxINotify
     watchTypes
     filePath
-    (\event -> runInIO $ handleEvent workingTree event)
-  where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create, Delete]
+    (\event -> runInIO $ handleEvent workingTree filePath event)
+  where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
 performInitialDirectorySweep :: Tree -> RawFilePath -> App ()
 performInitialDirectorySweep workingTree thisDir = do
@@ -162,12 +159,17 @@ performInitialDirectorySweep workingTree thisDir = do
   --files <- liftIO $ listDirectory thisDir
   -- liftIO $ print files
 
+  watchDirectory workingTree thisDir
+
   forM_ (map BS.pack files) $ \filename -> do
     let filepath = thisDir </> filename
     isDirectory <- liftIO $ doesDirectoryExist filepath
-    if isDirectory
-      then storeDirectory workingTree thisDir filename
-      else storeFile workingTree filepath
+    if not isDirectory
+      then storeFile workingTree filepath
+      else do
+        newTree <- liftIO $ fmap Tree H.new
+        liftIO $ H.insert (unTree workingTree) filename (ContentTree newTree)
+        performInitialDirectorySweep newTree filepath
 
 writeOutTree :: RawFilePath -> Tree -> App ()
 writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
@@ -205,7 +207,7 @@ testOutputLoop filepath = catch inner $ \e -> liftIO $ do
 runAppStartup :: App ()
 runAppStartup = do
   Context { cntxRootTree } <- ask
-  performInitialDirectorySweep cntxRootTree "/tmp/inotify-tool-test"
+  performInitialDirectorySweep cntxRootTree "testdir/"
 
 
 sendToUser :: BS.ByteString -> UserRequest ()
