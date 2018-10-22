@@ -49,7 +49,8 @@ main :: IO ()
 main = do
   opts <- execParser (info cmd $ progDesc "~ Unfinished Project ~")
   bracket openSocket close $ \sock -> do
-    async $ readThread sock
+    readAsync <- async $ readThread sock
     print opts
     postMessage sock opts
+    wait readAsync
 

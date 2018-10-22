@@ -231,6 +231,7 @@ clientSocketThread sock = do
       liftIO $ putStrLn $ "Error was " <> errorMsg
     Right msg ->
       runReaderT (processMessage msg) UserReqContext {ucntxHandle = handle}
+  liftIO $ putStrLn "Read thread exited"
 
 acceptLoop :: Socket -> App ()
 acceptLoop sock = do
