@@ -65,13 +65,13 @@ data Context = Context {
   cntxRootTree :: Tree
 }
 
-newtype App = App (ReaderT Context IO)
+type App = ReaderT Context IO
 
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
 }
 
-newtype UserRequest a = ReaderT UserReqContext App a
+type UserRequest a = ReaderT UserReqContext App a
 
 infixr 5 </>
 
@@ -167,7 +167,7 @@ performInitialDirectorySweep workingTree thisDir = do
     isDirectory <- liftIO $ doesDirectoryExist filepath
     if isDirectory
       then storeDirectory workingTree thisDir filename
-      else storeFile workingTree filename
+      else storeFile workingTree filepath
 
 writeOutTree :: RawFilePath -> Tree -> App ()
 writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
@@ -202,42 +202,56 @@ testOutputLoop filepath = catch inner $ \e -> liftIO $ do
     writeOutTree filepath cntxRootTree
     testOutputLoop filepath
 
-runApp :: App ()
-runApp = do
-  --async $ testOutputLoop "/tmp/inotify-tool-test"
-
+runAppStartup :: App ()
+runAppStartup = do
   Context { cntxRootTree } <- ask
-
   performInitialDirectorySweep cntxRootTree "/tmp/inotify-tool-test"
-  liftIO $ threadDelay $ 1000 * 1000 * 1000 * 1000
-  return ()
 
 
 sendToUser :: BS.ByteString -> UserRequest ()
 sendToUser message = do
   UserReqContext { ucntxHandle } <- ask
-  BS.hPutStrLn message
+  liftIO $ BS.hPutStrLn ucntxHandle message
 
 processMessage :: Cmd -> UserRequest ()
 processMessage TreeCmd = do
   sendToUser "Printing out directory tree"
 
-clientSocketThread :: Socket -> IO ()
+clientSocketThread :: Socket -> App ()
 clientSocketThread sock = do
-  putStrLn "in read thread"
-  handle <- socketToHandle sock ReadWriteMode
-  BS.hPutStrLn handle "Hello, you have connected to the socket"
-  _       <- hWaitForInput handle (-1)
-  recived <- BS.hGetContents handle
+  liftIO $ putStrLn "in read thread"
+  handle <- liftIO $ socketToHandle sock ReadWriteMode
+  liftIO $ BS.hPutStrLn handle "Hello, you have connected to the socket"
+  _       <- liftIO $ hWaitForInput handle (-1)
+  recived <- liftIO $ BS.hGetContents handle
   let eitherMSG = eitherDecodeStrict recived
   case eitherMSG of
-    Right _ -> do
-      BS.putStrLn $ "was not JSON" <> recived
-    Left msg -> processMessage msg
+    Left errorMsg -> do
+      liftIO $ BS.putStrLn $ "was not JSON" <> recived
+      liftIO $ putStrLn $ "Error was " <> errorMsg
+    Right msg ->
+      runReaderT (processMessage msg) UserReqContext {ucntxHandle = handle}
 
+acceptLoop :: Socket -> App ()
+acceptLoop sock = do
+  liftIO $ bind sock $ SockAddrUnix "/tmp/mysock"
+  liftIO $ listen sock 5
+  forever $ do
+    liftIO $ putStrLn "waiting to accept"
+    (sock', _) <- liftIO $ accept sock
+    liftIO $ putStrLn $ "got connection"
+    async $ clientSocketThread sock'
 
-runDirectoryMonitoringBit :: IO ()
-runDirectoryMonitoringBit = do
+runApp :: App ()
+runApp = do
+  liftIO $ tryRemoveFile "/tmp/mysock"
+  runAppStartup
+  bracket (liftIO $ socket AF_UNIX SeqPacket defaultProtocol)
+          (liftIO . close)
+          acceptLoop
+
+main :: IO ()
+main = do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
   withINotify $ \inotify -> runReaderT
@@ -248,17 +262,4 @@ runDirectoryMonitoringBit = do
       , cntxRootTree    = rootTree
       }
     )
-
-
-main :: IO ()
-main = do
-  tryRemoveFile "/tmp/mysock"
-  bracket (socket AF_UNIX SeqPacket defaultProtocol) close $ \sock -> do
-    bind sock $ SockAddrUnix "/tmp/mysock"
-    listen sock 5
-    forever $ do
-      putStrLn "waiting to accept"
-      (sock', _) <- accept sock
-      putStrLn $ "got connection"
-      async $ clientSocketThread sock'
 
