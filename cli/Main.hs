@@ -9,7 +9,7 @@ import qualified Data.ByteString.Lazy          as LBS
 import           Network
 import           Network.Socket                 ( socket
                                                 , Family(AF_UNIX)
-                                                , SocketType(SeqPacket)
+                                                , SocketType(Stream)
                                                 , defaultProtocol
                                                 , connect
                                                 , SockAddr(SockAddrUnix)
@@ -23,7 +23,7 @@ import LibWormhole
 
 postMessage :: Socket -> Cmd -> IO ()
 postMessage sock msg = do
-  let messageBS = encode msg
+  let messageBS = (encode msg <> "\n")
   sentCount <- send sock messageBS
   putStrLn $ "Sent " <> show sentCount <> " bytes"
 
@@ -35,7 +35,7 @@ cmd = hsubparser $ command "tree" $ info (pure TreeCmd)
 
 openSocket :: IO Socket
 openSocket = do
-  sock <- socket AF_UNIX SeqPacket defaultProtocol
+  sock <- socket AF_UNIX Stream defaultProtocol
   connect sock $ SockAddrUnix "/tmp/mysock"
   return sock
 

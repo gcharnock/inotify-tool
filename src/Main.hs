@@ -224,14 +224,15 @@ clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
   handle <- liftIO $ socketToHandle sock ReadWriteMode
   liftIO $ BS.hPutStrLn handle "Hello, you have connected to the socket"
-  _       <- liftIO $ hWaitForInput handle (-1)
-  recived <- liftIO $ BS.hGetContents handle
+  recived <- liftIO $ BS.hGetLine handle
+  liftIO $ putStrLn "got something from the socket"
   let eitherMSG = eitherDecodeStrict recived
   case eitherMSG of
     Left errorMsg -> do
       liftIO $ BS.putStrLn $ "was not JSON" <> recived
       liftIO $ putStrLn $ "Error was " <> errorMsg
-    Right msg ->
+    Right msg -> do
+      liftIO $ putStrLn "decoded correctly"
       runReaderT (processMessage msg) UserReqContext {ucntxHandle = handle}
   liftIO $ putStrLn "Read thread exited"
 
@@ -249,7 +250,7 @@ runApp :: App ()
 runApp = do
   liftIO $ tryRemoveFile "/tmp/mysock"
   runAppStartup
-  bracket (liftIO $ socket AF_UNIX SeqPacket defaultProtocol)
+  bracket (liftIO $ socket AF_UNIX Stream defaultProtocol)
           (liftIO . close)
           acceptLoop
 

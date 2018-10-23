@@ -7,8 +7,9 @@ mkDerivation {
   pname = "inotify-tool";
   version = "0.1.0.0";
   src = ./.;
-  isLibrary = false;
+  isLibrary = true;
   isExecutable = true;
+  libraryHaskellDepends = [ aeson base bytestring text ];
   executableHaskellDepends = [
     aeson base bytestring cryptonite directory filepath hashable
     hashtables hinotify interpolate memory mtl network
