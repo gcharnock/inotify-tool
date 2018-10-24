@@ -77,7 +77,7 @@ data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
 }
 
-type UserRequest a = ReaderT UserReqContext App a
+type UserRequest = ReaderT UserReqContext App
 
 infixr 5 </>
 
@@ -225,21 +225,23 @@ processMessage :: Cmd -> UserRequest ()
 processMessage TreeCmd = do
   sendToUser "Printing out directory tree"
 
-clientDecoder :: P.Parser BS.ByteString IO ()
+clientDecoder :: P.Parser BS.ByteString UserRequest ()
 clientDecoder =
   P.decodeGet Bin.getWord16be >>= \case
     Left decodeError -> error "decode error"
     Right messageLength -> do
+      liftIO $ putStrLn "got message length from the socket"
       P.decodeGet (Bin.getByteString (fromIntegral messageLength)) >>= \case
         Left decodeError -> error "decode error"
         Right messageBS -> do
+          liftIO $ putStrLn "got message from the socket"
           case eitherDecodeStrict messageBS of
               Left errorMsg -> do
-                liftIO $ BS.putStrLn $ "was not JSON" <> messageBS
-                liftIO $ putStrLn $ "Error was " <> errorMsg
+                P.lift $ sendToUser $ "was not JSON" <> messageBS
+                P.lift $ sendToUser $ BS.pack $ "Error was " <> errorMsg
               Right msg -> do
                 liftIO $ putStrLn "decoded correctly"
-                let _ = msg :: Cmd
+                P.lift $ processMessage msg
                 clientDecoder
 
 
@@ -249,20 +251,11 @@ clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
   handle <- liftIO $ socketToHandle sock ReadWriteMode
   let fromClient = P.fromHandle handle
-  let toClient = P.toHandle handle
-  -- P.runEffect $ P.for fromClient (\) >-> toClient
-  liftIO $ BS.hPutStrLn handle "Hello, you have connected to the socket"
-  recived <- liftIO $ BS.hGetLine handle
-  liftIO $ putStrLn "got something from the socket"
-  let eitherMSG = eitherDecodeStrict recived
-  case eitherMSG of
-    Left errorMsg -> do
-      liftIO $ BS.putStrLn $ "was not JSON" <> recived
-      liftIO $ putStrLn $ "Error was " <> errorMsg
-    Right msg -> do
-      liftIO $ putStrLn "decoded correctly"
-      runReaderT (processMessage msg) UserReqContext {ucntxHandle = handle}
-  liftIO $ putStrLn "Read thread exited"
+  flip runReaderT (UserReqContext {ucntxHandle = handle}) $ do
+    -- P.runEffect $ P.for fromClient (\) >-> toClient
+    sendToUser "Hello, you have connected to the socket"
+    P.runStateT clientDecoder fromClient
+    liftIO $ putStrLn "Read thread exited"
 
 acceptLoop :: Socket -> App ()
 acceptLoop sock = do
