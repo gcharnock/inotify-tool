@@ -44,6 +44,12 @@ import           Data.ByteArray
 import           Network.Socket
 import           Data.Aeson
 import           LibWormhole                    ( Cmd(TreeCmd) )
+import qualified Pipes as P
+import qualified Pipes.Binary as P
+import qualified Pipes.ByteString as P
+import qualified Pipes.Parse as P
+import qualified Data.Binary as Bin
+import qualified Data.Binary.Get as Bin
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -219,10 +225,32 @@ processMessage :: Cmd -> UserRequest ()
 processMessage TreeCmd = do
   sendToUser "Printing out directory tree"
 
+clientDecoder :: P.Parser BS.ByteString IO ()
+clientDecoder =
+  P.decodeGet Bin.getWord16be >>= \case
+    Left decodeError -> error "decode error"
+    Right messageLength -> do
+      P.decodeGet (Bin.getByteString (fromIntegral messageLength)) >>= \case
+        Left decodeError -> error "decode error"
+        Right messageBS -> do
+          case eitherDecodeStrict messageBS of
+              Left errorMsg -> do
+                liftIO $ BS.putStrLn $ "was not JSON" <> messageBS
+                liftIO $ putStrLn $ "Error was " <> errorMsg
+              Right msg -> do
+                liftIO $ putStrLn "decoded correctly"
+                let _ = msg :: Cmd
+                clientDecoder
+
+
+
 clientSocketThread :: Socket -> App ()
 clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
   handle <- liftIO $ socketToHandle sock ReadWriteMode
+  let fromClient = P.fromHandle handle
+  let toClient = P.toHandle handle
+  -- P.runEffect $ P.for fromClient (\) >-> toClient
   liftIO $ BS.hPutStrLn handle "Hello, you have connected to the socket"
   recived <- liftIO $ BS.hGetLine handle
   liftIO $ putStrLn "got something from the socket"
