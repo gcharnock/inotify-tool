@@ -160,6 +160,10 @@ watchDirectory workingTree filePath = do
     (\event -> runInIO $ handleEvent workingTree filePath event)
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
+syncDirectory :: Tree -> RawFilePath -> App ()
+syncDirectory tree filepath = do
+  return ()
+
 performInitialDirectorySweep :: Tree -> RawFilePath -> App ()
 performInitialDirectorySweep workingTree thisDir = do
   Context { cntxINotify = inotify } <- ask
