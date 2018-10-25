@@ -1,5 +1,6 @@
 module Main where
 
+import Control.Monad.Trans (lift)
 import qualified System.Directory              as Sys
 import           Data.Monoid
 import           System.IO
@@ -58,10 +59,14 @@ newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
 showT :: Show a => a -> T.Text
 showT = T.pack . show
 
+showBS :: Show a => a -> BS.ByteString
+showBS = BS.pack . show
+
 instance Hashable FileHash where
   hashWithSalt salt (FileHash a) = hashWithSalt salt $ (convert a :: BS.ByteString)
 
 data TreeContent = ContentFile FileHash | ContentTree Tree
+  deriving Show
 
 newtype Tree = Tree { unTree :: HashTable RawFilePath TreeContent } deriving (Show)
 
@@ -219,11 +224,25 @@ runAppStartup = do
 sendToUser :: BS.ByteString -> UserRequest ()
 sendToUser message = do
   UserReqContext { ucntxHandle } <- ask
-  liftIO $ BS.hPutStrLn ucntxHandle message
+  liftIO $ BS.hPutStr ucntxHandle message
+
+printTree :: Int -> Tree -> UserRequest ()
+printTree indent tree =
+  withRunInIO $ \runInIO -> 
+    flip H.mapM_ (unTree tree) $ \(filename, contents) ->
+      runInIO $ do
+        replicateM_ indent $ sendToUser " "
+        sendToUser $ filename <> " -> "
+        case contents of
+          ContentFile (FileHash fileHash) -> sendToUser $ showBS fileHash <> "\n"
+          ContentTree tree -> do
+            sendToUser "\n"
+            printTree (indent + 2) tree
 
 processMessage :: Cmd -> UserRequest ()
 processMessage TreeCmd = do
-  sendToUser "Printing out directory tree"
+  Context { cntxObjectStore, cntxRootTree } <- lift ask
+  printTree 0 cntxRootTree
 
 clientDecoder :: P.Parser BS.ByteString UserRequest ()
 clientDecoder =
@@ -253,7 +272,7 @@ clientSocketThread sock = do
   let fromClient = P.fromHandle handle
   flip runReaderT (UserReqContext {ucntxHandle = handle}) $ do
     -- P.runEffect $ P.for fromClient (\) >-> toClient
-    sendToUser "Hello, you have connected to the socket"
+    sendToUser "Hello, you have connected to the socket\n"
     P.runStateT clientDecoder fromClient
     liftIO $ putStrLn "Read thread exited"
 
