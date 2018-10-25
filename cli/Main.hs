@@ -1,5 +1,5 @@
 
-import Control.Monad (forever)
+import           Control.Monad                  ( forever )
 import           Options.Applicative
 import           Data.Monoid                    ( (<>) )
 import           Data.Aeson
@@ -15,19 +15,24 @@ import           Network.Socket                 ( socket
                                                 , SockAddr(SockAddrUnix)
                                                 , close
                                                 )
-import           Network.Socket.ByteString.Lazy (send, recv)
+import           Network.Socket.ByteString.Lazy ( send
+                                                , recv
+                                                )
 import           Control.Exception
-import UnliftIO.Async
-import LibWormhole
+import           UnliftIO.Async
+import           LibWormhole
+import qualified Data.Binary.Put               as Bin
 
 
 postMessage :: Socket -> Cmd -> IO ()
 postMessage sock msg = do
-  let messageBS = (encode msg <> "\n")
+  let payload = (encode msg <> "\n")
+  let length  = LBS.length payload
+  let messageBS = Bin.runPut $ do
+        Bin.putWord16be $ fromIntegral length
+        Bin.putLazyByteString payload
   sentCount <- send sock messageBS
   putStrLn $ "Sent " <> show sentCount <> " bytes"
-
-
 
 cmd :: Parser Cmd
 cmd = hsubparser $ command "tree" $ info (pure TreeCmd)
@@ -43,7 +48,7 @@ readThread :: Socket -> IO ()
 readThread sock = forever $ do
   msg <- recv sock 1024
   LBS.putStrLn msg
-  
+
 
 main :: IO ()
 main = do

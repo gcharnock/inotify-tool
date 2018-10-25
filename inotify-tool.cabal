@@ -47,6 +47,7 @@ executable wh
                        bytestring,
                        aeson,
                        network,
+                       binary,
                        unliftio,
                        unliftio-core
 executable whd
