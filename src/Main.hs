@@ -19,11 +19,6 @@ import qualified Data.ByteString.RawFilePath   as RFP
                                          hiding ( putStrLn )
 import qualified Data.ByteString.Char8         as BS
 import           RawFilePath.Directory
-import           RawFilePath             hiding ( putStrLn
-                                                , unpack
-                                                , pack
-                                                )
-import           Data.String.Interpolate.IsString
 import           Control.Monad
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
@@ -44,12 +39,11 @@ import           Data.Hashable
 import           Data.ByteArray
 import           Network.Socket
 import           Data.Aeson
-import           LibWormhole                    ( Cmd(TreeCmd) )
+import           LibWormhole                    
 import qualified Pipes as P
 import qualified Pipes.Binary as P
 import qualified Pipes.ByteString as P
 import qualified Pipes.Parse as P
-import qualified Data.Binary as Bin
 import qualified Data.Binary.Get as Bin
 
 type HashTable k v = H.BasicHashTable k v
@@ -100,10 +94,13 @@ sha256File filepath = do
 info :: MonadIO m => T.Text -> m ()
 info = liftIO . T.putStrLn
 
+forTree :: MonadUnliftIO m => Tree -> ((RawFilePath, TreeContent) -> m ()) -> m ()
+forTree tree action = withRunInIO $ \runInIO -> H.mapM_ (\a -> runInIO $ action a) (unTree tree)
+
 store :: FileHash -> BS.ByteString -> App ()
-store hash contents = do
+store filehash contents = do
   Context { cntxObjectStore } <- ask
-  liftIO $ H.insert cntxObjectStore hash contents
+  liftIO $ H.insert cntxObjectStore filehash contents
 
 
 storeFile :: Tree -> RawFilePath -> App ()
@@ -117,9 +114,9 @@ storeFile workingTree filename = do
 
 
 retrive :: FileHash -> App BS.ByteString
-retrive hash = do
+retrive filehash = do
   Context { cntxObjectStore } <- ask
-  liftIO $ H.lookup cntxObjectStore hash >>= \case
+  liftIO $ H.lookup cntxObjectStore filehash >>= \case
     Nothing       -> error "ERROR: Could not find hash"
     Just contents -> return contents
 
@@ -139,11 +136,11 @@ handleEvent workingTree dirPath event = try handler >>= \case
             performInitialDirectorySweep newWorkingTree filepath 
           else storeFile workingTree filepath
 
-      Modified { isDirectory, maybeFilePath } -> case maybeFilePath of
+      Modified { maybeFilePath } -> case maybeFilePath of
         Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
         Just filename -> storeFile workingTree (dirPath </> filename)
 
-      Deleted { isDirectory, filePath } -> do
+      Deleted { filePath } -> do
         info $ "REMOVE: " <> T.decodeUtf8 filePath
         liftIO $ H.delete (unTree workingTree) filePath
 
@@ -160,21 +157,27 @@ watchDirectory workingTree filePath = do
     (\event -> runInIO $ handleEvent workingTree filePath event)
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
-syncDirectory :: Tree -> RawFilePath -> App ()
-syncDirectory tree filepath = do
-  return ()
+dumpToDirectory :: Tree -> RawFilePath -> App ()
+dumpToDirectory tree filepath =
+  forTree tree $ \(filename, treeContent) ->
+    case treeContent of
+      ContentTree _ -> info "Skipping directory, as not yet implemented"
+      ContentFile fileHash -> do
+        contents <- retrive fileHash
+        info $ "OUT: " <> T.decodeUtf8 filename
+        liftIO $ RFP.withFile (filepath </> filename) WriteMode $ \hd ->
+          BS.hPut hd contents
+
 
 performInitialDirectorySweep :: Tree -> RawFilePath -> App ()
 performInitialDirectorySweep workingTree thisDir = do
-  Context { cntxINotify = inotify } <- ask
-
   liftIO $ BS.putStrLn $ "SCAN " <> thisDir <> ""
 
   files <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
   --files <- liftIO $ listDirectory thisDir
   -- liftIO $ print files
 
-  watchDirectory workingTree thisDir
+  _ <- watchDirectory workingTree thisDir
 
   forM_ (map BS.pack files) $ \filename -> do
     let filepath = thisDir </> filename
@@ -193,13 +196,13 @@ writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
     let fullFilePath = dirPath </> filename
     case contents of
       ContentFile fileHash -> do
-        contents <- retrive fileHash
+        fileContents <- retrive fileHash
         info
           $  "OUTPUT: "
           <> T.decodeUtf8 fullFilePath
           <> " "
           <> renderFileHash fileHash
-        liftIO $ RFP.writeFile fullFilePath contents
+        liftIO $ RFP.writeFile fullFilePath fileContents 
       ContentTree subTree -> do
         liftIO $ createDirectoryIfMissing True fullFilePath
         writeOutTree fullFilePath subTree
@@ -239,23 +242,27 @@ printTree indent tree =
         sendToUser $ filename <> " -> "
         case contents of
           ContentFile (FileHash fileHash) -> sendToUser $ showBS fileHash <> "\n"
-          ContentTree tree -> do
+          ContentTree innerTree -> do
             sendToUser "\n"
-            printTree (indent + 2) tree
+            printTree (indent + 2) innerTree
 
-processMessage :: Cmd -> UserRequest ()
-processMessage TreeCmd = do
-  Context { cntxObjectStore, cntxRootTree } <- lift ask
-  printTree 0 cntxRootTree
+processMessage :: ClientMsg -> UserRequest ()
+processMessage ClientMsg { cmsgCmd, cmsgCwd } = case cmsgCmd of
+    TreeCmd -> do
+       Context { cntxRootTree } <- lift ask
+       printTree 0 cntxRootTree
+    DumpCmd -> do
+       Context { cntxRootTree } <- lift ask
+       lift $ dumpToDirectory cntxRootTree (T.encodeUtf8 cmsgCwd)
 
 clientDecoder :: P.Parser BS.ByteString UserRequest ()
 clientDecoder =
   P.decodeGet Bin.getWord16be >>= \case
-    Left decodeError -> error "decode error"
+    Left _ -> error "decode error"
     Right messageLength -> do
       liftIO $ putStrLn "got message length from the socket"
       P.decodeGet (Bin.getByteString (fromIntegral messageLength)) >>= \case
-        Left decodeError -> error "decode error"
+        Left _ -> error "decode error"
         Right messageBS -> do
           liftIO $ putStrLn "got message from the socket"
           case eitherDecodeStrict messageBS of
@@ -272,12 +279,12 @@ clientDecoder =
 clientSocketThread :: Socket -> App ()
 clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
-  handle <- liftIO $ socketToHandle sock ReadWriteMode
-  let fromClient = P.fromHandle handle
-  flip runReaderT (UserReqContext {ucntxHandle = handle}) $ do
+  hd <- liftIO $ socketToHandle sock ReadWriteMode
+  let fromClient = P.fromHandle hd 
+  flip runReaderT (UserReqContext {ucntxHandle = hd }) $ do
     -- P.runEffect $ P.for fromClient (\) >-> toClient
     sendToUser "Hello, you have connected to the socket\n"
-    P.runStateT clientDecoder fromClient
+    _ <- P.runStateT clientDecoder fromClient
     liftIO $ putStrLn "Read thread exited"
 
 acceptLoop :: Socket -> App ()

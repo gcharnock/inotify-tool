@@ -1,11 +1,11 @@
-
 import           Control.Monad                  ( forever )
 import           Options.Applicative
 import           Data.Monoid                    ( (<>) )
 import           Data.Aeson
-import           GHC.Generics
-import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Lazy          as LBS
+                                         hiding ( putStrLn )
+import qualified Data.ByteString.Lazy.Char8    as LBS
+                                                ( putStrLn )
 import           Network
 import           Network.Socket                 ( socket
                                                 , Family(AF_UNIX)
@@ -22,21 +22,28 @@ import           Control.Exception
 import           UnliftIO.Async
 import           LibWormhole
 import qualified Data.Binary.Put               as Bin
+import           System.Posix.Directory.ByteString
+                                                ( getWorkingDirectory )
+import           Data.Text.Encoding             ( decodeUtf8 )
 
 
-postMessage :: Socket -> Cmd -> IO ()
+postMessage :: Socket -> ClientMsg -> IO ()
 postMessage sock msg = do
-  let payload = (encode msg <> "\n")
-  let length  = LBS.length payload
+  let payload       = (encode msg <> "\n")
+  let payloadLength = LBS.length payload
   let messageBS = Bin.runPut $ do
-        Bin.putWord16be $ fromIntegral length
+        Bin.putWord16be $ fromIntegral payloadLength
         Bin.putLazyByteString payload
   sentCount <- send sock messageBS
   putStrLn $ "Sent " <> show sentCount <> " bytes"
 
-cmd :: Parser Cmd
-cmd = hsubparser $ command "tree" $ info (pure TreeCmd)
-                                         (progDesc "Show the project tree")
+cmdParser :: Parser Cmd
+cmdParser = hsubparser $ mconcat
+  [ command "tree" $ info (pure TreeCmd) (progDesc "Show the project tree")
+  , command "dump" $ info
+    (pure DumpCmd)
+    (progDesc "Dump the contents of a project on to the filesystem")
+  ]
 
 openSocket :: IO Socket
 openSocket = do
@@ -52,10 +59,10 @@ readThread sock = forever $ do
 
 main :: IO ()
 main = do
-  opts <- execParser (info cmd $ progDesc "~ Unfinished Project ~")
+  cmd <- execParser (info cmdParser $ progDesc "~ Unfinished Project ~")
+  cwd <- getWorkingDirectory
   bracket openSocket close $ \sock -> do
     readAsync <- async $ readThread sock
-    print opts
-    postMessage sock opts
+    postMessage sock $ ClientMsg {cmsgCwd = decodeUtf8 cwd, cmsgCmd = cmd}
     wait readAsync
 
