@@ -21,7 +21,8 @@ mkDerivation {
     unliftio unliftio-core
   ];
   testHaskellDepends = [
-    base bytestring hspec rawfilepath text unix
+    base bytestring hashable hashtables hinotify hspec mtl rawfilepath
+    text transformers unix unliftio unliftio-core
   ];
   license = stdenv.lib.licenses.unfree;
   hydraPlatforms = stdenv.lib.platforms.none;
