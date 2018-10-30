@@ -25,7 +25,7 @@ instance FromJSON ClientMsg
 instance ToJSON ClientMsg
 
 makePathAbsolute :: MonadIO m => RawFilePath -> m RawFilePath
-makePathAbsolute filepath = do
+makePathAbsolute filepath =
     if BS.take 1 filepath == "/"
         then return filepath
         else do
