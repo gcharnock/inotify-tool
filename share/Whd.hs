@@ -171,7 +171,10 @@ dumpToDirectory :: Tree -> RawFilePath -> App ()
 dumpToDirectory tree filepath =
   forTree tree $ \(filename, treeContent) ->
     case treeContent of
-      ContentTree _ -> info "Skipping directory, as not yet implemented"
+      ContentTree subtree -> do
+        let subpath = filepath </> filename
+        liftIO $ createDirectory subpath
+        dumpToDirectory subtree subpath
       ContentFile fileHash -> do
         contents <- retrive fileHash
         info $ "OUT: " <> T.decodeUtf8 filename
@@ -182,7 +185,7 @@ dumpToDirectory tree filepath =
 writeOutTree :: RawFilePath -> Tree -> App ()
 writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
   info $ "whiteOutTree: dirPath=" <> T.decodeUtf8 dirPath
-  flip H.mapM_ (unTree tree) $ \(filename, contents) -> runInIO $ do
+  forTree tree $ \(filename, contents) -> runInIO $ do
     let fullFilePath = dirPath </> filename
     case contents of
       ContentFile fileHash -> do

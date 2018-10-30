@@ -4,11 +4,14 @@ import           Control.Monad.Trans.Class
 import           Data.Monoid
 import           Control.Monad.IO.Class
 import           Test.Hspec
-import qualified Data.ByteString               as BS hiding (putStrLn)
-import qualified Data.ByteString.Char8         as BS (putStrLn)
+import qualified Data.ByteString               as BS
+                                         hiding ( putStrLn )
+import qualified Data.ByteString.Char8         as BS
+                                                ( putStrLn )
 import qualified Data.ByteString.RawFilePath   as RFP
 import           System.Posix.ByteString.FilePath
 import           System.Posix.Directory.ByteString
+import           System.Posix.Files.ByteString
 import           System.Posix.Temp.ByteString
 
 import qualified Data.HashTable.IO             as H
@@ -44,9 +47,7 @@ withTestEnv :: TestEnv App a -> IO a
 withTestEnv action = do
   tmpDir <- mkdtemp "testdir/test"
   BS.putStrLn $ "testdir was " <> tmpDir
-  runDefaultApp $
-    flip runReaderT TestContext {testCntxTmpDir = tmpDir} $
-      action
+  runDefaultApp $ flip runReaderT TestContext {testCntxTmpDir = tmpDir} $ action
 
 getTmpDir :: Monad m => TestEnv m RawFilePath
 getTmpDir = fmap testCntxTmpDir ask
@@ -56,22 +57,29 @@ writeFileTestEnv filepath contents = do
   dirPath <- getTmpDir
   liftIO $ RFP.writeFile (dirPath <> "/" <> filepath) contents
 
+deleteFileTestEnv :: MonadIO m => RawFilePath -> TestEnv m ()
+deleteFileTestEnv filepath = do
+  dirPath <- getTmpDir
+  liftIO $ removeLink $ dirPath <> "/" <> filepath
+
 mkDirTestEnv :: MonadIO m => RawFilePath -> TestEnv m ()
 mkDirTestEnv filepath = do
   dirPath <- getTmpDir
-  liftIO $ createDirectory (dirPath <> "/" <> filepath) 0o700 
+  liftIO $ createDirectory (dirPath <> "/" <> filepath) ownerModes
 
 
 inApp :: App a -> TestEnv App a
 inApp = lift
 
 main :: IO ()
-main = hspec spec 
+main = hspec spec
 
 spec :: Spec
 spec = do
-  describe "filepath utils" $
-    it "path seperator should be correct" $ pathSeperator `shouldBe` BS.head "/"
+  describe "filepath utils"
+    $          it "path seperator should be correct"
+    $          pathSeperator
+    `shouldBe` BS.head "/"
 
 
   describe "splitFilePath" $ it "should correctly split a path" $ do
@@ -92,64 +100,87 @@ spec = do
 
     it
         "should add a file when presented with a directory with a single file in it"
-      $
-          withTestEnv $ do
-            writeFileTestEnv "hello.txt" "hello world"
+      $ withTestEnv
+      $ do
+          writeFileTestEnv "hello.txt" "hello world"
 
-            dirPath <- getTmpDir
-            inApp $ startProjectSync dirPath
+          dirPath <- getTmpDir
+          inApp $ startProjectSync dirPath
 
-            outTable <- fmap unTree $ inApp getRootTree
-            outFile  <- liftIO $ H.lookup outTable "hello.txt"
-            liftIO
-              $               outFile
-              `shouldSatisfy` (\case
-                                Just _  -> True
-                                Nothing -> False
-                              )
+          outTable <- fmap unTree $ inApp getRootTree
+          outFile  <- liftIO $ H.lookup outTable "hello.txt"
+          liftIO $ outFile `shouldSatisfy` \case
+            Just (ContentFile _) -> True
+            _                    -> False
 
-    it "should detect a new file created after the directory is watched" $
+
+    it "should remove a file when the file is deleted" $ withTestEnv $ do
+      writeFileTestEnv "hello.txt" "hello world"
+      dirPath <- getTmpDir
+      inApp $ startProjectSync dirPath
+      deleteFileTestEnv "hello.txt"
+
+      waitForApp
+
+      rootTree <- inApp getRootTree
+      len      <- liftIO $ fmap length $ H.toList $ unTree rootTree
+      liftIO $ len `shouldBe` 0
+
+
+    it "should detect a new file created after the directory is watched"
+      $ withTestEnv
+      $ do
+          dirPath <- getTmpDir
+          inApp $ startProjectSync dirPath
+
+          writeFileTestEnv "hello.txt" "hello world"
+          waitForApp
+
+          outTable <- fmap unTree $ inApp getRootTree
+          outFile  <- liftIO $ H.lookup outTable "hello.txt"
+          liftIO $ outFile `shouldSatisfy` \case
+            Just (ContentFile _) -> True
+            _                    -> False
+
+    it "should add a directory on initial scan" $ withTestEnv $ do
+      dirPath <- getTmpDir
+      mkDirTestEnv "testDir"
+      inApp $ startProjectSync dirPath
+      outTable <- fmap unTree $ inApp getRootTree
+      outDir   <- liftIO $ H.lookup outTable "testDir"
+      liftIO $ outDir `shouldSatisfy` \case
+        Just (ContentTree _) -> True
+        _                    -> False
+
+
+    it "should directory when one appears" $ withTestEnv $ do
+      dirPath <- getTmpDir
+      inApp $ startProjectSync dirPath
+
+      mkDirTestEnv "testDir"
+      waitForApp
+
+      outTable <- fmap unTree $ inApp getRootTree
+      outDir   <- liftIO $ H.lookup outTable "testDir"
+      liftIO $ outDir `shouldSatisfy` \case
+        Just (ContentTree _) -> True
+        _                    -> False
+
+  describe "dumpToDirectory" $
+    it "should output a copy of a previously watched directory structure" $
       withTestEnv $ do
         dirPath <- getTmpDir
+        writeFileTestEnv "hello.txt" "hello dump"
+        mkDirTestEnv "subdir"
+        writeFileTestEnv "subdir/subfile" "subfile contents"
         inApp $ startProjectSync dirPath
 
-        writeFileTestEnv "hello.txt" "hello world"
-        waitForApp
+        outDir <- liftIO $ mkdtemp "testdir/dumpToDirectory"
+        inApp $ getRootTree >>= \tree -> dumpToDirectory tree outDir
 
-        outTable <- fmap unTree $ inApp getRootTree
-        outFile  <- liftIO $ H.lookup outTable "hello.txt"
-        liftIO
-          $               outFile
-          `shouldSatisfy` \case
-                            Just (ContentFile _)  -> True
-                            _ -> False
+        hello <- liftIO $ RFP.readFile $ outDir <> "/" <>  "hello.txt"
+        liftIO $ hello `shouldBe` "hello dump"
 
-    it "should add a directory on initial scan" $
-      withTestEnv $ do
-        dirPath <- getTmpDir
-        mkDirTestEnv "testDir"
-        inApp $ startProjectSync dirPath
-        outTable <- fmap unTree $ inApp getRootTree
-        outDir   <- liftIO $ H.lookup outTable "testDir"
-        liftIO
-          $              outDir 
-          `shouldSatisfy` \case
-                            Just (ContentTree _)  -> True
-                            _ -> False
-                          
+        subfile <- liftIO $ RFP.readFile $ outDir <> "/" <>  "subdir/subfile"
+        liftIO $ subfile `shouldBe` "subfile contents"
 
-    it "should directory when one appears" $
-      withTestEnv $ do
-        dirPath <- getTmpDir
-        inApp $ startProjectSync dirPath
-
-        mkDirTestEnv "testDir"
-        waitForApp
-
-        outTable <- fmap unTree $ inApp getRootTree
-        outDir   <- liftIO $ H.lookup outTable "testDir"
-        liftIO
-          $              outDir 
-          `shouldSatisfy` \case
-                            Just (ContentTree _)  -> True
-                            _ -> False
