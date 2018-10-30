@@ -28,43 +28,52 @@ runDefaultApp :: MonadIO m => App a -> m a
 runDefaultApp action = liftIO $ do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
+  stateRoot <- mkdtemp "testdir/stateroot"
   withINotify $ \inotify -> runReaderT
     action
     (Context
       { cntxINotify     = inotify
       , cntxObjectStore = objectStore
       , cntxRootTree    = rootTree
+      , cntxStateRoot   = stateRoot
       }
     )
 
 data TestContext = TestContext {
-  testCntxTmpDir :: RawFilePath
+  testCntxTmpDirA :: RawFilePath,
+  testCntxTmpDirB :: RawFilePath
 }
 
 type TestEnv m = ReaderT TestContext m
 
 withTestEnv :: TestEnv App a -> IO a
 withTestEnv action = do
-  tmpDir <- mkdtemp "testdir/test"
-  BS.putStrLn $ "testdir was " <> tmpDir
-  runDefaultApp $ flip runReaderT TestContext {testCntxTmpDir = tmpDir} $ action
+  tmpDirA <- mkdtemp "testdir/test_a"
+  tmpDirB <- mkdtemp "testdir/test_b"
+  BS.putStrLn $ "testdirs where A=" <> tmpDirA <> ", B=" <> tmpDirB
+  runDefaultApp $ runReaderT
+    action
+    TestContext {testCntxTmpDirA = tmpDirA, testCntxTmpDirB = tmpDirB}
 
-getTmpDir :: Monad m => TestEnv m RawFilePath
-getTmpDir = fmap testCntxTmpDir ask
+getTmpDirA :: Monad m => TestEnv m RawFilePath
+getTmpDirA = fmap testCntxTmpDirA ask
+
+getTmpDirB :: Monad m => TestEnv m RawFilePath
+getTmpDirB = fmap testCntxTmpDirB ask
 
 writeFileTestEnv :: MonadIO m => RawFilePath -> BS.ByteString -> TestEnv m ()
 writeFileTestEnv filepath contents = do
-  dirPath <- getTmpDir
+  dirPath <- getTmpDirA
   liftIO $ RFP.writeFile (dirPath <> "/" <> filepath) contents
 
 deleteFileTestEnv :: MonadIO m => RawFilePath -> TestEnv m ()
 deleteFileTestEnv filepath = do
-  dirPath <- getTmpDir
+  dirPath <- getTmpDirA
   liftIO $ removeLink $ dirPath <> "/" <> filepath
 
 mkDirTestEnv :: MonadIO m => RawFilePath -> TestEnv m ()
 mkDirTestEnv filepath = do
-  dirPath <- getTmpDir
+  dirPath <- getTmpDirA
   liftIO $ createDirectory (dirPath <> "/" <> filepath) ownerModes
 
 
@@ -91,7 +100,7 @@ spec = do
     it "should not add any objects when presented with an empty directory"
       $ withTestEnv
       $ do
-          dirPath <- getTmpDir
+          dirPath <- getTmpDirA
           inApp $ startProjectSync dirPath
           rootTree <- inApp getRootTree
 
@@ -104,7 +113,7 @@ spec = do
       $ do
           writeFileTestEnv "hello.txt" "hello world"
 
-          dirPath <- getTmpDir
+          dirPath <- getTmpDirA
           inApp $ startProjectSync dirPath
 
           outTable <- fmap unTree $ inApp getRootTree
@@ -116,7 +125,7 @@ spec = do
 
     it "should remove a file when the file is deleted" $ withTestEnv $ do
       writeFileTestEnv "hello.txt" "hello world"
-      dirPath <- getTmpDir
+      dirPath <- getTmpDirA
       inApp $ startProjectSync dirPath
       deleteFileTestEnv "hello.txt"
 
@@ -130,7 +139,7 @@ spec = do
     it "should detect a new file created after the directory is watched"
       $ withTestEnv
       $ do
-          dirPath <- getTmpDir
+          dirPath <- getTmpDirA
           inApp $ startProjectSync dirPath
 
           writeFileTestEnv "hello.txt" "hello world"
@@ -143,7 +152,7 @@ spec = do
             _                    -> False
 
     it "should add a directory on initial scan" $ withTestEnv $ do
-      dirPath <- getTmpDir
+      dirPath <- getTmpDirA
       mkDirTestEnv "testDir"
       inApp $ startProjectSync dirPath
       outTable <- fmap unTree $ inApp getRootTree
@@ -154,7 +163,7 @@ spec = do
 
 
     it "should directory when one appears" $ withTestEnv $ do
-      dirPath <- getTmpDir
+      dirPath <- getTmpDirA
       inApp $ startProjectSync dirPath
 
       mkDirTestEnv "testDir"
@@ -166,10 +175,27 @@ spec = do
         Just (ContentTree _) -> True
         _                    -> False
 
-  describe "dumpToDirectory" $
-    it "should output a copy of a previously watched directory structure" $
-      withTestEnv $ do
-        dirPath <- getTmpDir
+  describe "two target directories" $ do 
+    it "calling startProjectSync on trees" $
+      'a' `shouldBe` 'b'
+
+    it "" $ withTestEnv $ do
+      dirPathA <- getTmpDirA
+      dirPathB <- getTmpDirB
+
+      writeFileTestEnv "hello.txt" "content"
+
+      inApp $ startProjectSync dirPathA
+      inApp $ startProjectSync dirPathB
+
+      outFile <- liftIO $ RFP.readFile $ dirPathB <> "/" <> "hello.txt"
+      liftIO $ outFile `shouldBe` "content"
+
+  describe "dumpToDirectory"
+    $ it "should output a copy of a previously watched directory structure"
+    $ withTestEnv
+    $ do
+        dirPath <- getTmpDirA
         writeFileTestEnv "hello.txt" "hello dump"
         mkDirTestEnv "subdir"
         writeFileTestEnv "subdir/subfile" "subfile contents"
@@ -178,9 +204,9 @@ spec = do
         outDir <- liftIO $ mkdtemp "testdir/dumpToDirectory"
         inApp $ getRootTree >>= \tree -> dumpToDirectory tree outDir
 
-        hello <- liftIO $ RFP.readFile $ outDir <> "/" <>  "hello.txt"
+        hello <- liftIO $ RFP.readFile $ outDir <> "/" <> "hello.txt"
         liftIO $ hello `shouldBe` "hello dump"
 
-        subfile <- liftIO $ RFP.readFile $ outDir <> "/" <>  "subdir/subfile"
+        subfile <- liftIO $ RFP.readFile $ outDir <> "/" <> "subdir/subfile"
         liftIO $ subfile `shouldBe` "subfile contents"
 

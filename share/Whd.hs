@@ -67,7 +67,8 @@ newtype Tree = Tree { unTree :: HashTable RawFilePath TreeContent } deriving (Sh
 data Context = Context {
   cntxINotify :: INotify,
   cntxObjectStore :: HashTable FileHash BS.ByteString,
-  cntxRootTree :: Tree
+  cntxRootTree :: Tree,
+  cntxStateRoot :: RawFilePath
 }
 
 type App = ReaderT Context IO
@@ -325,13 +326,17 @@ main :: IO ()
 main = do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
-  withINotify $ \inotify -> runReaderT
-    runApp
-    (Context
-      { cntxINotify     = inotify
-      , cntxObjectStore = objectStore
-      , cntxRootTree    = rootTree
-      }
-    )
+  getHomeDirectory >>= \case
+    Nothing -> error "could not get $HOME"
+    Just homeDir ->
+      withINotify $ \inotify -> runReaderT
+        runApp
+        (Context
+          { cntxINotify     = inotify
+          , cntxObjectStore = objectStore
+          , cntxRootTree    = rootTree
+          , cntxStateRoot   = homeDir <> "/var/wh"
+          }
+        )
     
     
