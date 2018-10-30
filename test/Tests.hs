@@ -4,7 +4,8 @@ import           Control.Monad.Trans.Class
 import           Data.Monoid
 import           Control.Monad.IO.Class
 import           Test.Hspec
-import qualified Data.ByteString               as BS
+import qualified Data.ByteString               as BS hiding (putStrLn)
+import qualified Data.ByteString.Char8         as BS (putStrLn)
 import qualified Data.ByteString.RawFilePath   as RFP
 import           System.Posix.ByteString.FilePath
 import           System.Posix.Directory.ByteString
@@ -42,6 +43,7 @@ type TestEnv m = ReaderT TestContext m
 withTestEnv :: TestEnv App a -> IO a
 withTestEnv action = do
   tmpDir <- mkdtemp "testdir/test"
+  BS.putStrLn $ "testdir was " <> tmpDir
   runDefaultApp $
     flip runReaderT TestContext {testCntxTmpDir = tmpDir} $
       action
@@ -64,7 +66,10 @@ inApp :: App a -> TestEnv App a
 inApp = lift
 
 main :: IO ()
-main = hspec $ do
+main = hspec spec 
+
+spec :: Spec
+spec = do
   describe "filepath utils" $
     it "path seperator should be correct" $ pathSeperator `shouldBe` BS.head "/"
 
@@ -115,10 +120,9 @@ main = hspec $ do
         outFile  <- liftIO $ H.lookup outTable "hello.txt"
         liftIO
           $               outFile
-          `shouldSatisfy` (\case
-                            Just _  -> True
-                            Nothing -> False
-                          )
+          `shouldSatisfy` \case
+                            Just (ContentFile _)  -> True
+                            _ -> False
 
     it "should add a directory on initial scan" $
       withTestEnv $ do
@@ -129,8 +133,23 @@ main = hspec $ do
         outDir   <- liftIO $ H.lookup outTable "testDir"
         liftIO
           $              outDir 
-          `shouldSatisfy` (\case
-                            Nothing -> False
-                            Just _  -> True
-                          )
+          `shouldSatisfy` \case
+                            Just (ContentTree _)  -> True
+                            _ -> False
+                          
 
+    it "should directory when one appears" $
+      withTestEnv $ do
+        dirPath <- getTmpDir
+        inApp $ startProjectSync dirPath
+
+        mkDirTestEnv "testDir"
+        waitForApp
+
+        outTable <- fmap unTree $ inApp getRootTree
+        outDir   <- liftIO $ H.lookup outTable "testDir"
+        liftIO
+          $              outDir 
+          `shouldSatisfy` \case
+                            Just (ContentTree _)  -> True
+                            _ -> False

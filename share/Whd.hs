@@ -115,7 +115,11 @@ storeFile workingTree filepath = do
   let (_, filename) = splitFilepath filepath
   liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
 
-
+storeDir :: Tree -> Tree -> RawFilePath -> App ()
+storeDir workingTree subtree filepath = do
+  info $ "STOREDIR: " <> T.decodeUtf8 filepath
+  let (_, filename) = splitFilepath filepath
+  liftIO $ H.insert (unTree workingTree) filename (ContentTree subtree)
 
 retrive :: FileHash -> App BS.ByteString
 retrive filehash = do
@@ -137,8 +141,10 @@ handleEvent workingTree dirPath event = try handler >>= \case
         if isDirectory
           then do
             newWorkingTree <- liftIO $ Tree <$> H.new
+            storeDir workingTree newWorkingTree filepath
             startDirSync newWorkingTree filepath 
-          else storeFile workingTree filepath
+          else
+            storeFile workingTree filepath
 
       Modified { maybeFilePath } -> case maybeFilePath of
         Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
