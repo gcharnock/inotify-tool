@@ -19,29 +19,34 @@ import           Control.Monad.Trans.Reader
 import           System.INotify
 import           Whd                     hiding ( main )
 import           LibWormhole
-import           Control.Concurrent
+import           Control.Concurrent.STM
 
-waitForApp :: MonadIO m => m ()
-waitForApp = liftIO $ threadDelay 500000
+waitForApp :: TestEnv App ()
+waitForApp = do
+  TestContext { queue } <- ask
+  _ <- liftIO $ atomically $ readTQueue queue
+  return ()
 
-runDefaultApp :: MonadIO m => App a -> m a
-runDefaultApp action = liftIO $ do
+runDefaultApp :: MonadIO m => TQueue Event -> App a -> m a
+runDefaultApp queue action = liftIO $ do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
-  stateRoot <- mkdtemp "testdir/stateroot"
+  stateRoot   <- mkdtemp "testdir/stateroot"
   withINotify $ \inotify -> runReaderT
     action
     (Context
-      { cntxINotify     = inotify
-      , cntxObjectStore = objectStore
-      , cntxRootTree    = rootTree
-      , cntxStateRoot   = stateRoot
+      { cntxINotify      = inotify
+      , cntxObjectStore  = objectStore
+      , cntxRootTree     = rootTree
+      , cntxStateRoot    = stateRoot
+      , cntxINotifyQueue = Just queue
       }
     )
 
 data TestContext = TestContext {
   testCntxTmpDirA :: RawFilePath,
-  testCntxTmpDirB :: RawFilePath
+  testCntxTmpDirB :: RawFilePath,
+  queue :: TQueue Event
 }
 
 type TestEnv m = ReaderT TestContext m
@@ -51,9 +56,11 @@ withTestEnv action = do
   tmpDirA <- mkdtemp "testdir/test_a"
   tmpDirB <- mkdtemp "testdir/test_b"
   BS.putStrLn $ "testdirs where A=" <> tmpDirA <> ", B=" <> tmpDirB
-  runDefaultApp $ runReaderT
+  queue <- atomically newTQueue
+
+  runDefaultApp queue $ runReaderT
     action
-    TestContext {testCntxTmpDirA = tmpDirA, testCntxTmpDirB = tmpDirB}
+    TestContext {testCntxTmpDirA = tmpDirA, testCntxTmpDirB = tmpDirB, queue }
 
 getTmpDirA :: Monad m => TestEnv m RawFilePath
 getTmpDirA = fmap testCntxTmpDirA ask
@@ -175,9 +182,8 @@ spec = do
         Just (ContentTree _) -> True
         _                    -> False
 
-  describe "two target directories" $ do 
-    it "calling startProjectSync on trees" $
-      'a' `shouldBe` 'b'
+  describe "two target directories" $ do
+    it "calling startProjectSync on trees" $ 'a' `shouldBe` 'b'
 
     it "" $ withTestEnv $ do
       dirPathA <- getTmpDirA

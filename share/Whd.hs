@@ -46,6 +46,7 @@ import qualified Pipes.ByteString              as P
 import qualified Pipes.Parse                   as P
 import qualified Data.Binary.Get               as Bin
 import qualified System.Posix.ByteString as Posix
+import Control.Concurrent.STM
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -69,7 +70,8 @@ data Context = Context {
   cntxINotify :: INotify,
   cntxObjectStore :: HashTable FileHash BS.ByteString,
   cntxRootTree :: Tree,
-  cntxStateRoot :: RawFilePath
+  cntxStateRoot :: RawFilePath,
+  cntxINotifyQueue :: Maybe (TQueue Event)
 }
 
 whenM :: Monad m => m Bool -> m () -> m ()
@@ -93,6 +95,12 @@ getCheckoutDir = do
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
 }
+
+broadcastEvent :: Event -> App ()
+broadcastEvent event = ask >>= \case
+  Context {  cntxINotifyQueue = Just queue } ->
+    liftIO $ atomically $ writeTQueue queue event
+  _ -> return ()
 
 type UserRequest = ReaderT UserReqContext App
 
@@ -161,14 +169,18 @@ handleEvent workingTree dirPath event = try handler >>= \case
             storeDir workingTree newWorkingTree filepath
             startDirSync newWorkingTree filepath
           else storeFile workingTree filepath
+        broadcastEvent event
 
-      Modified { maybeFilePath } -> case maybeFilePath of
-        Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
-        Just filename -> storeFile workingTree (dirPath </> filename)
+      Modified { maybeFilePath } -> do
+        case maybeFilePath of
+          Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
+          Just filename -> storeFile workingTree (dirPath </> filename)
+        broadcastEvent event
 
       Deleted { filePath } -> do
         info $ "REMOVE: " <> T.decodeUtf8 filePath
         liftIO $ H.delete (unTree workingTree) filePath
+        broadcastEvent event
 
       _ -> return ()
 
@@ -358,6 +370,7 @@ main = do
         , cntxObjectStore = objectStore
         , cntxRootTree    = rootTree
         , cntxStateRoot   = homeDir <> "/var/wh"
+        , cntxINotifyQueue = Nothing
         }
       )
 
