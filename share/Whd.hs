@@ -1,6 +1,6 @@
 module Whd where
 
-import Control.Monad.Trans (lift)
+import           Control.Monad.Trans            ( lift )
 import qualified System.Directory              as Sys
 import           Data.Monoid
 import           System.IO
@@ -39,12 +39,13 @@ import           Data.Hashable
 import           Data.ByteArray
 import           Network.Socket
 import           Data.Aeson
-import           LibWormhole                    
-import qualified Pipes as P
-import qualified Pipes.Binary as P
-import qualified Pipes.ByteString as P
-import qualified Pipes.Parse as P
-import qualified Data.Binary.Get as Bin
+import           LibWormhole
+import qualified Pipes                         as P
+import qualified Pipes.Binary                  as P
+import qualified Pipes.ByteString              as P
+import qualified Pipes.Parse                   as P
+import qualified Data.Binary.Get               as Bin
+import qualified System.Posix.ByteString as Posix
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -71,10 +72,23 @@ data Context = Context {
   cntxStateRoot :: RawFilePath
 }
 
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM test action = test >>= \case
+  True  -> action
+  False -> return ()
+
 type App = ReaderT Context IO
 
 getRootTree :: App Tree
 getRootTree = fmap cntxRootTree ask
+
+getStateRoot :: App RawFilePath
+getStateRoot = fmap cntxStateRoot ask
+
+getCheckoutDir :: App RawFilePath
+getCheckoutDir = do
+  stateRoot <- getStateRoot
+  return $ stateRoot </> "checkouts"
 
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
@@ -98,8 +112,10 @@ sha256File filepath = do
 info :: MonadIO m => T.Text -> m ()
 info = liftIO . T.putStrLn
 
-forTree :: MonadUnliftIO m => Tree -> ((RawFilePath, TreeContent) -> m ()) -> m ()
-forTree tree action = withRunInIO $ \runInIO -> H.mapM_ (\a -> runInIO $ action a) (unTree tree)
+forTree
+  :: MonadUnliftIO m => Tree -> ((RawFilePath, TreeContent) -> m ()) -> m ()
+forTree tree action =
+  withRunInIO $ \runInIO -> H.mapM_ (\a -> runInIO $ action a) (unTree tree)
 
 store :: FileHash -> BS.ByteString -> App ()
 store filehash contents = do
@@ -109,7 +125,7 @@ store filehash contents = do
 
 storeFile :: Tree -> RawFilePath -> App ()
 storeFile workingTree filepath = do
-  fileBytes <- liftIO $ RFP.readFile filepath 
+  fileBytes <- liftIO $ RFP.readFile filepath
   let fileHash = FileHash $ hashWith SHA256 fileBytes
   info $ "STORE: " <> renderFileHash fileHash <> " " <> T.decodeUtf8 filepath
   store fileHash fileBytes
@@ -143,9 +159,8 @@ handleEvent workingTree dirPath event = try handler >>= \case
           then do
             newWorkingTree <- liftIO $ Tree <$> H.new
             storeDir workingTree newWorkingTree filepath
-            startDirSync newWorkingTree filepath 
-          else
-            storeFile workingTree filepath
+            startDirSync newWorkingTree filepath
+          else storeFile workingTree filepath
 
       Modified { maybeFilePath } -> case maybeFilePath of
         Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
@@ -169,18 +184,17 @@ watchDirectory workingTree filePath = do
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
 dumpToDirectory :: Tree -> RawFilePath -> App ()
-dumpToDirectory tree filepath =
-  forTree tree $ \(filename, treeContent) ->
-    case treeContent of
-      ContentTree subtree -> do
-        let subpath = filepath </> filename
-        liftIO $ createDirectory subpath
-        dumpToDirectory subtree subpath
-      ContentFile fileHash -> do
-        contents <- retrive fileHash
-        info $ "OUT: " <> T.decodeUtf8 filename
-        liftIO $ RFP.withFile (filepath </> filename) WriteMode $ \hd ->
-          BS.hPut hd contents
+dumpToDirectory tree filepath = forTree tree $ \(filename, treeContent) ->
+  case treeContent of
+    ContentTree subtree -> do
+      let subpath = filepath </> filename
+      liftIO $ createDirectory subpath
+      dumpToDirectory subtree subpath
+    ContentFile fileHash -> do
+      contents <- retrive fileHash
+      info $ "OUT: " <> T.decodeUtf8 filename
+      liftIO $ RFP.withFile (filepath </> filename) WriteMode $ \hd ->
+        BS.hPut hd contents
 
 
 writeOutTree :: RawFilePath -> Tree -> App ()
@@ -196,7 +210,7 @@ writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
           <> T.decodeUtf8 fullFilePath
           <> " "
           <> renderFileHash fileHash
-        liftIO $ RFP.writeFile fullFilePath fileContents 
+        liftIO $ RFP.writeFile fullFilePath fileContents
       ContentTree subTree -> do
         liftIO $ createDirectoryIfMissing True fullFilePath
         writeOutTree fullFilePath subTree
@@ -221,7 +235,7 @@ startDirSync workingTree thisDir = do
   info $ "SCAN: " <> T.decodeUtf8 thisDir
 
   files <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
-  _ <- watchDirectory workingTree thisDir
+  _     <- watchDirectory workingTree thisDir
 
   forM_ (map BS.pack files) $ \filename -> do
     let filepath = thisDir </> filename
@@ -241,9 +255,18 @@ startProjectSync thisDir = do
 
 runAppStartup :: App ()
 runAppStartup = do
-  projectFilePath <- makePathAbsolute "testdir/"
-  startProjectSync projectFilePath
+  checkoutDir <- getCheckoutDir
+  checkouts   <- liftIO $ listDirectory checkoutDir
+  forM_ checkouts $ \filename -> startProjectSync $ checkoutDir </> filename 
 
+checkoutProject :: T.Text -> RawFilePath -> App ()
+checkoutProject checkoutName checkoutTo = do
+  checkoutDir <- getCheckoutDir
+  let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName 
+  liftIO $ whenM (doesFileExist linkFilepath) $ error "project already checked out under that name"
+  liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
+  startProjectSync $ linkFilepath
+  
 
 sendToUser :: BS.ByteString -> UserRequest ()
 sendToUser message = do
@@ -252,44 +275,44 @@ sendToUser message = do
 
 printTree :: Int -> Tree -> UserRequest ()
 printTree indent tree =
-  withRunInIO $ \runInIO -> 
-    flip H.mapM_ (unTree tree) $ \(filename, contents) ->
-      runInIO $ do
-        replicateM_ indent $ sendToUser " "
-        sendToUser $ filename <> " -> "
-        case contents of
-          ContentFile (FileHash fileHash) -> sendToUser $ showBS fileHash <> "\n"
-          ContentTree innerTree -> do
-            sendToUser "\n"
-            printTree (indent + 2) innerTree
+  withRunInIO
+    $ \runInIO -> flip H.mapM_ (unTree tree) $ \(filename, contents) ->
+        runInIO $ do
+          replicateM_ indent $ sendToUser " "
+          sendToUser $ filename <> " -> "
+          case contents of
+            ContentFile (FileHash fileHash) ->
+              sendToUser $ showBS fileHash <> "\n"
+            ContentTree innerTree -> do
+              sendToUser "\n"
+              printTree (indent + 2) innerTree
 
 processMessage :: ClientMsg -> UserRequest ()
 processMessage ClientMsg { cmsgCmd, cmsgCwd } = case cmsgCmd of
-    TreeCmd -> do
-       Context { cntxRootTree } <- lift ask
-       printTree 0 cntxRootTree
-    DumpCmd -> do
-       Context { cntxRootTree } <- lift ask
-       lift $ dumpToDirectory cntxRootTree (T.encodeUtf8 cmsgCwd)
+  TreeCmd -> do
+    Context { cntxRootTree } <- lift ask
+    printTree 0 cntxRootTree
+  DumpCmd -> do
+    Context { cntxRootTree } <- lift ask
+    lift $ dumpToDirectory cntxRootTree (T.encodeUtf8 cmsgCwd)
 
 clientDecoder :: P.Parser BS.ByteString UserRequest ()
-clientDecoder =
-  P.decodeGet Bin.getWord16be >>= \case
-    Left _ -> error "decode error"
-    Right messageLength -> do
-      liftIO $ putStrLn "got message length from the socket"
-      P.decodeGet (Bin.getByteString (fromIntegral messageLength)) >>= \case
-        Left _ -> error "decode error"
-        Right messageBS -> do
-          liftIO $ putStrLn "got message from the socket"
-          case eitherDecodeStrict messageBS of
-              Left errorMsg -> do
-                P.lift $ sendToUser $ "was not JSON" <> messageBS
-                P.lift $ sendToUser $ BS.pack $ "Error was " <> errorMsg
-              Right msg -> do
-                liftIO $ putStrLn "decoded correctly"
-                P.lift $ processMessage msg
-                clientDecoder
+clientDecoder = P.decodeGet Bin.getWord16be >>= \case
+  Left  _             -> error "decode error"
+  Right messageLength -> do
+    liftIO $ putStrLn "got message length from the socket"
+    P.decodeGet (Bin.getByteString (fromIntegral messageLength)) >>= \case
+      Left  _         -> error "decode error"
+      Right messageBS -> do
+        liftIO $ putStrLn "got message from the socket"
+        case eitherDecodeStrict messageBS of
+          Left errorMsg -> do
+            P.lift $ sendToUser $ "was not JSON" <> messageBS
+            P.lift $ sendToUser $ BS.pack $ "Error was " <> errorMsg
+          Right msg -> do
+            liftIO $ putStrLn "decoded correctly"
+            P.lift $ processMessage msg
+            clientDecoder
 
 
 
@@ -297,8 +320,8 @@ clientSocketThread :: Socket -> App ()
 clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
   hd <- liftIO $ socketToHandle sock ReadWriteMode
-  let fromClient = P.fromHandle hd 
-  flip runReaderT (UserReqContext {ucntxHandle = hd }) $ do
+  let fromClient = P.fromHandle hd
+  flip runReaderT (UserReqContext {ucntxHandle = hd}) $ do
     -- P.runEffect $ P.for fromClient (\) >-> toClient
     sendToUser "Hello, you have connected to the socket\n"
     _ <- P.runStateT clientDecoder fromClient
@@ -327,16 +350,15 @@ main = do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
   getHomeDirectory >>= \case
-    Nothing -> error "could not get $HOME"
-    Just homeDir ->
-      withINotify $ \inotify -> runReaderT
-        runApp
-        (Context
-          { cntxINotify     = inotify
-          , cntxObjectStore = objectStore
-          , cntxRootTree    = rootTree
-          , cntxStateRoot   = homeDir <> "/var/wh"
-          }
-        )
-    
-    
+    Nothing      -> error "could not get $HOME"
+    Just homeDir -> withINotify $ \inotify -> runReaderT
+      runApp
+      (Context
+        { cntxINotify     = inotify
+        , cntxObjectStore = objectStore
+        , cntxRootTree    = rootTree
+        , cntxStateRoot   = homeDir <> "/var/wh"
+        }
+      )
+
+
