@@ -9,10 +9,9 @@ import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Char8         as BS
                                                 ( putStrLn )
 import qualified Data.ByteString.RawFilePath   as RFP
-import           System.Posix.ByteString.FilePath
-import           System.Posix.Directory.ByteString
-import           System.Posix.Files.ByteString
-import           System.Posix.Temp.ByteString
+import qualified RawFilePath.Directory   as RFP
+
+import qualified System.Posix.ByteString as Posix
 
 import qualified Data.HashTable.IO             as H
 import           Control.Monad.Trans.Reader
@@ -21,17 +20,18 @@ import           Whd                     hiding ( main )
 import           LibWormhole
 import           Control.Concurrent.STM
 
+
 waitForApp :: TestEnv App ()
 waitForApp = do
-  TestContext { queue } <- ask
-  _ <- liftIO $ atomically $ readTQueue queue
+  TestContext { testCntxQueue } <- ask
+  _ <- liftIO $ atomically $ readTQueue testCntxQueue
   return ()
 
-runDefaultApp :: MonadIO m => TQueue Event -> App a -> m a
-runDefaultApp queue action = liftIO $ do
+runDefaultApp :: MonadIO m => TestContext -> App a -> m a
+runDefaultApp testContext action = liftIO $ do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
-  stateRoot   <- mkdtemp "testdir/stateroot"
+  stateRoot   <- Posix.mkdtemp "testdir/stateroot"
   withINotify $ \inotify -> runReaderT
     action
     (Context
@@ -39,56 +39,76 @@ runDefaultApp queue action = liftIO $ do
       , cntxObjectStore  = objectStore
       , cntxRootTree     = rootTree
       , cntxStateRoot    = stateRoot
-      , cntxINotifyQueue = Just queue
+      , cntxINotifyQueue = Just $ testCntxQueue testContext
       }
     )
 
 data TestContext = TestContext {
-  testCntxTmpDirA :: RawFilePath,
-  testCntxTmpDirB :: RawFilePath,
-  queue :: TQueue Event
+  testCntxStateRoot :: Posix.RawFilePath,
+  testCntxTmpDirA :: Posix.RawFilePath,
+  testCntxTmpDirB :: Posix.RawFilePath,
+  testCntxQueue :: TQueue Event
 }
 
 type TestEnv m = ReaderT TestContext m
 
 withTestEnv :: TestEnv App a -> IO a
 withTestEnv action = do
-  tmpDirA <- mkdtemp "testdir/test_a"
-  tmpDirB <- mkdtemp "testdir/test_b"
-  BS.putStrLn $ "testdirs where A=" <> tmpDirA <> ", B=" <> tmpDirB
+  cwd <- Posix.getWorkingDirectory
+  tmpDirA   <- Posix.mkdtemp $ cwd </> "testdir/test_a_"
+  cwd <- Posix.getWorkingDirectory
+  RFP.removeDirectoryRecursive $ cwd </> "testdir"
+  Posix.createDirectory $ cwd </> "testDir"
+  tmpDirB   <- Posix.mkdtemp $ cwd </> "testdir/test_b_"
+  stateRoot <- Posix.mkdtemp $ cwd </> "testdir/stateroot_"
+  BS.putStrLn $ "testdirs where A=" <> tmpDirA <> ", B=" <> tmpDirB <> ",testRoot=" <> stateRoot
   queue <- atomically newTQueue
+  let testContext = TestContext
+        { testCntxTmpDirA   = tmpDirA
+        , testCntxTmpDirB   = tmpDirB
+        , testCntxQueue     = queue
+        , testCntxStateRoot = stateRoot
+        }
+  out <- runDefaultApp testContext $ runReaderT action testContext
+  RFP.removeDirectoryRecursive tmpDirA
+  RFP.removeDirectoryRecursive tmpDirB
+  RFP.removeDirectoryRecursive stateRoot
+  return out
 
-  runDefaultApp queue $ runReaderT
-    action
-    TestContext {testCntxTmpDirA = tmpDirA, testCntxTmpDirB = tmpDirB, queue }
-
-getTmpDirA :: Monad m => TestEnv m RawFilePath
+getTmpDirA :: Monad m => TestEnv m Posix.RawFilePath
 getTmpDirA = fmap testCntxTmpDirA ask
 
-getTmpDirB :: Monad m => TestEnv m RawFilePath
+getTmpDirB :: Monad m => TestEnv m Posix.RawFilePath
 getTmpDirB = fmap testCntxTmpDirB ask
 
-writeFileTestEnv :: MonadIO m => RawFilePath -> BS.ByteString -> TestEnv m ()
+getStateDir :: Monad m => TestEnv m Posix.RawFilePath
+getStateDir = fmap testCntxStateRoot ask
+
+writeFileTestEnv :: MonadIO m => Posix.RawFilePath -> BS.ByteString -> TestEnv m ()
 writeFileTestEnv filepath contents = do
   dirPath <- getTmpDirA
   liftIO $ RFP.writeFile (dirPath <> "/" <> filepath) contents
 
-deleteFileTestEnv :: MonadIO m => RawFilePath -> TestEnv m ()
+deleteFileTestEnv :: MonadIO m => Posix.RawFilePath -> TestEnv m ()
 deleteFileTestEnv filepath = do
   dirPath <- getTmpDirA
-  liftIO $ removeLink $ dirPath <> "/" <> filepath
+  liftIO $ Posix.removeLink $ dirPath <> "/" <> filepath
 
-mkDirTestEnv :: MonadIO m => RawFilePath -> TestEnv m ()
+mkDirTestEnv :: MonadIO m => Posix.RawFilePath -> TestEnv m ()
 mkDirTestEnv filepath = do
   dirPath <- getTmpDirA
-  liftIO $ createDirectory (dirPath <> "/" <> filepath) ownerModes
+  liftIO $ Posix.createDirectory (dirPath <> "/" <> filepath) Posix.ownerModes
 
 
 inApp :: App a -> TestEnv App a
 inApp = lift
 
 main :: IO ()
-main = hspec spec
+main = do 
+  cwd <- Posix.getWorkingDirectory
+  RFP.removeDirectoryRecursive $ cwd </> "testdir"
+  Posix.createDirectory $ cwd </> "testDir"
+  hspec spec
 
 spec :: Spec
 spec = do
@@ -182,37 +202,43 @@ spec = do
         Just (ContentTree _) -> True
         _                    -> False
 
-  describe "two target directories" $ do
-    it "calling startProjectSync on trees" $ 'a' `shouldBe` 'b'
-
-    it "" $ withTestEnv $ do
+  describe "checkoutProject" $
+    it "checkoutProject creates a link in the state dir" $ withTestEnv $ do
       dirPathA <- getTmpDirA
-      dirPathB <- getTmpDirB
+      stateDir <- getStateDir
+      inApp $ checkoutProject "checkoutName" dirPathA
 
-      writeFileTestEnv "hello.txt" "content"
+      linksTo <- liftIO $ Posix.readSymbolicLink $ stateDir </> "checkouts" </> "checkoutName"
+      liftIO $ linksTo `shouldBe` dirPathA
 
-      inApp $ startProjectSync dirPathA
-      inApp $ startProjectSync dirPathB
+  --  it "" $ withTestEnv $ do
+  --    dirPathA <- getTmpDirA
+  --    dirPathB <- getTmpDirB
 
-      outFile <- liftIO $ RFP.readFile $ dirPathB <> "/" <> "hello.txt"
-      liftIO $ outFile `shouldBe` "content"
+  --    writeFileTestEnv "hello.txt" "content"
 
-  describe "dumpToDirectory"
-    $ it "should output a copy of a previously watched directory structure"
-    $ withTestEnv
-    $ do
-        dirPath <- getTmpDirA
-        writeFileTestEnv "hello.txt" "hello dump"
-        mkDirTestEnv "subdir"
-        writeFileTestEnv "subdir/subfile" "subfile contents"
-        inApp $ startProjectSync dirPath
+  --    inApp $ startProjectSync dirPathA
+  --    inApp $ startProjectSync dirPathB
 
-        outDir <- liftIO $ mkdtemp "testdir/dumpToDirectory"
-        inApp $ getRootTree >>= \tree -> dumpToDirectory tree outDir
+  --    outFile <- liftIO $ RFP.readFile $ dirPathB <> "/" <> "hello.txt"
+  --    liftIO $ outFile `shouldBe` "content"
 
-        hello <- liftIO $ RFP.readFile $ outDir <> "/" <> "hello.txt"
-        liftIO $ hello `shouldBe` "hello dump"
+  --describe "dumpToDirectory"
+  --  $ it "should output a copy of a previously watched directory structure"
+  --  $ withTestEnv
+  --  $ do
+  --      dirPath <- getTmpDirA
+  --      writeFileTestEnv "hello.txt" "hello dump"
+  --      mkDirTestEnv "subdir"
+  --      writeFileTestEnv "subdir/subfile" "subfile contents"
+  --      inApp $ startProjectSync dirPath
 
-        subfile <- liftIO $ RFP.readFile $ outDir <> "/" <> "subdir/subfile"
-        liftIO $ subfile `shouldBe` "subfile contents"
+  --      outDir <- liftIO $ Posix.mkdtemp "testdir/dumpToDirectory"
+  --      inApp $ getRootTree >>= \tree -> dumpToDirectory tree outDir
+
+  --      hello <- liftIO $ RFP.readFile $ outDir <> "/" <> "hello.txt"
+  --      liftIO $ hello `shouldBe` "hello dump"
+
+  --      subfile <- liftIO $ RFP.readFile $ outDir <> "/" <> "subdir/subfile"
+  --      liftIO $ subfile `shouldBe` "subfile contents"
 

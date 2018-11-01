@@ -120,6 +120,7 @@ sha256File filepath = do
 info :: MonadIO m => T.Text -> m ()
 info = liftIO . T.putStrLn
 
+
 forTree
   :: MonadUnliftIO m => Tree -> ((RawFilePath, TreeContent) -> m ()) -> m ()
 forTree tree action =
@@ -273,6 +274,7 @@ runAppStartup = do
 
 checkoutProject :: T.Text -> RawFilePath -> App ()
 checkoutProject checkoutName checkoutTo = do
+  info $ "CHECKOUT:" <> checkoutName <> " to: " <> T.decodeUtf8 checkoutTo
   checkoutDir <- getCheckoutDir
   let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName 
   liftIO $ whenM (doesFileExist linkFilepath) $ error "project already checked out under that name"
