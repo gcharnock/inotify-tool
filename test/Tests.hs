@@ -19,6 +19,8 @@ import           System.INotify
 import           Whd                     hiding ( main )
 import           LibWormhole
 import           Control.Concurrent.STM
+import qualified Data.Text.Encoding as T
+import qualified Data.Text.IO as T
 
 
 waitForApp :: TestEnv App ()
@@ -31,14 +33,13 @@ runDefaultApp :: MonadIO m => TestContext -> App a -> m a
 runDefaultApp testContext action = liftIO $ do
   objectStore <- H.new
   rootTree    <- fmap Tree H.new
-  stateRoot   <- Posix.mkdtemp "testdir/stateroot"
   withINotify $ \inotify -> runReaderT
     action
     (Context
       { cntxINotify      = inotify
       , cntxObjectStore  = objectStore
       , cntxRootTree     = rootTree
-      , cntxStateRoot    = stateRoot
+      , cntxStateRoot    = testCntxStateRoot testContext 
       , cntxINotifyQueue = Just $ testCntxQueue testContext
       }
     )
@@ -55,10 +56,8 @@ type TestEnv m = ReaderT TestContext m
 withTestEnv :: TestEnv App a -> IO a
 withTestEnv action = do
   cwd <- Posix.getWorkingDirectory
+  T.putStrLn $ "cwd = " <> T.decodeUtf8 cwd
   tmpDirA   <- Posix.mkdtemp $ cwd </> "testdir/test_a_"
-  cwd <- Posix.getWorkingDirectory
-  RFP.removeDirectoryRecursive $ cwd </> "testdir"
-  Posix.createDirectory $ cwd </> "testDir"
   tmpDirB   <- Posix.mkdtemp $ cwd </> "testdir/test_b_"
   stateRoot <- Posix.mkdtemp $ cwd </> "testdir/stateroot_"
   BS.putStrLn $ "testdirs where A=" <> tmpDirA <> ", B=" <> tmpDirB <> ",testRoot=" <> stateRoot
@@ -69,7 +68,9 @@ withTestEnv action = do
         , testCntxQueue     = queue
         , testCntxStateRoot = stateRoot
         }
-  out <- runDefaultApp testContext $ runReaderT action testContext
+  out <- runDefaultApp testContext $ flip runReaderT testContext $ do
+    inApp ensureStateDirIsSetup 
+    action
   RFP.removeDirectoryRecursive tmpDirA
   RFP.removeDirectoryRecursive tmpDirB
   RFP.removeDirectoryRecursive stateRoot
@@ -104,14 +105,17 @@ inApp :: App a -> TestEnv App a
 inApp = lift
 
 main :: IO ()
-main = do 
-  cwd <- Posix.getWorkingDirectory
-  RFP.removeDirectoryRecursive $ cwd </> "testdir"
-  Posix.createDirectory $ cwd </> "testDir"
-  hspec spec
+main = hspec spec
+
+setup :: IO ()
+setup =  do
+    cwd <- Posix.getWorkingDirectory
+    let tmpdir = cwd </> "testdir"
+    whenM (Posix.fileExist tmpdir) $ RFP.removeDirectoryRecursive tmpdir
+    Posix.createDirectory tmpdir Posix.ownerModes
 
 spec :: Spec
-spec = do
+spec = beforeAll_ setup $ do
   describe "filepath utils"
     $          it "path seperator should be correct"
     $          pathSeperator

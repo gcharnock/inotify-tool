@@ -274,9 +274,10 @@ runAppStartup = do
 
 checkoutProject :: T.Text -> RawFilePath -> App ()
 checkoutProject checkoutName checkoutTo = do
-  info $ "CHECKOUT:" <> checkoutName <> " to: " <> T.decodeUtf8 checkoutTo
   checkoutDir <- getCheckoutDir
+  info $ "checkoutDir = " <> T.decodeUtf8 checkoutDir
   let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName 
+  info $ "CHECKOUT:" <> checkoutName <> ": " <> T.decodeUtf8 linkFilepath <> " -> " <> T.decodeUtf8 checkoutTo
   liftIO $ whenM (doesFileExist linkFilepath) $ error "project already checked out under that name"
   liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
   startProjectSync $ linkFilepath
@@ -351,9 +352,15 @@ acceptLoop sock = do
     liftIO $ putStrLn $ "got connection"
     async $ clientSocketThread sock'
 
+ensureStateDirIsSetup :: App ()
+ensureStateDirIsSetup = do
+  checkoutDir <- getCheckoutDir 
+  liftIO $ whenM (not <$> Posix.fileExist checkoutDir) $ Posix.createDirectory checkoutDir Posix.ownerModes
+
 runApp :: App ()
 runApp = do
   liftIO $ tryRemoveFile "/tmp/mysock"
+  ensureStateDirIsSetup
   runAppStartup
   bracket (liftIO $ socket AF_UNIX Stream defaultProtocol)
           (liftIO . close)
