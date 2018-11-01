@@ -206,7 +206,7 @@ spec = beforeAll_ setup $ do
         Just (ContentTree _) -> True
         _                    -> False
 
-  describe "checkoutProject" $
+  describe "checkoutProject" $ do
     it "checkoutProject creates a link in the state dir" $ withTestEnv $ do
       dirPathA <- getTmpDirA
       stateDir <- getStateDir
@@ -214,6 +214,9 @@ spec = beforeAll_ setup $ do
 
       linksTo <- liftIO $ Posix.readSymbolicLink $ stateDir </> "checkouts" </> "checkoutName"
       liftIO $ linksTo `shouldBe` dirPathA
+
+    it "checkoutProject on a directory with a file in it adds that file to the project" $ pending
+      
 
   --  it "" $ withTestEnv $ do
   --    dirPathA <- getTmpDirA
