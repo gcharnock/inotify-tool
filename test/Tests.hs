@@ -217,7 +217,7 @@ spec = beforeAll_ setup $ do
         _                    -> False
 
   describe "checkoutProject" $ do
-    it "checkoutProject creates a link in the state dir" $ withTestEnv $ do
+    it "creates a link in the state dir" $ withTestEnv $ do
       dirPathA <- getTmpDirA
       stateDir <- getStateDir
       inApp $ checkoutProject "checkoutName" dirPathA
@@ -231,7 +231,7 @@ spec = beforeAll_ setup $ do
       liftIO $ linksTo `shouldBe` dirPathA
 
     it
-        "checkoutProject will clone files in an existing project into a second checkout"
+        "will clone files in an existing project into a second checkout"
       $ withTestEnv
       $ do
           dirPathA <- getTmpDirA
@@ -244,6 +244,18 @@ spec = beforeAll_ setup $ do
             $ unlessM (Posix.fileExist $ dirPathB </> "hello.txt")
             $ expectationFailure "hello.txt was not copied"
 
+    it "will clone files in the second project back to the existing project"
+      $ withTestEnv
+      $ do
+          dirPathA <- getTmpDirA
+          dirPathB <- getTmpDirB
+          writeFileTestEnvB "hello.txt" "hello world"
+          inApp $ checkoutProject "checkoutA" dirPathA
+          inApp $ checkoutProject "checkoutB" dirPathB
+
+          liftIO
+            $ unlessM (Posix.fileExist $ dirPathA </> "hello.txt")
+            $ expectationFailure "hello.txt was not copied"
 
   --  it "" $ withTestEnv $ do
   --    dirPathA <- getTmpDirA
