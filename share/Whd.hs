@@ -79,6 +79,11 @@ whenM test action = test >>= \case
   True  -> action
   False -> return ()
 
+unlessM :: Monad m => m Bool -> m () -> m ()
+unlessM test action = test >>= \case
+  True  -> return ()
+  False -> action 
+
 type App = ReaderT Context IO
 
 getRootTree :: App Tree
@@ -247,10 +252,12 @@ startDirSync :: Tree -> RawFilePath -> App ()
 startDirSync workingTree thisDir = do
   info $ "SCAN: " <> T.decodeUtf8 thisDir
 
-  files <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
+  diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
   _     <- watchDirectory workingTree thisDir
 
-  forM_ (map BS.pack files) $ \filename -> do
+  storeFiles <- liftIO $ H.toList $ unTree workingTree 
+
+  forM_ (map BS.pack diskFiles) $ \filename -> do
     let filepath = thisDir </> filename
     isDirectory <- liftIO $ doesDirectoryExist filepath
     if not isDirectory
@@ -259,6 +266,14 @@ startDirSync workingTree thisDir = do
         newTree <- liftIO $ fmap Tree H.new
         liftIO $ H.insert (unTree workingTree) filename (ContentTree newTree)
         startDirSync newTree filepath
+
+  forM_ storeFiles $ \(filename, contents) -> do
+    let filepath = thisDir </> filename
+    case contents of
+      ContentFile filehash -> do
+        fileBytes <- retrive filehash
+        liftIO $ RFP.writeFile filepath fileBytes
+      _ -> return ()
 
 
 startProjectSync :: RawFilePath -> App ()

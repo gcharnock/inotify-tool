@@ -9,9 +9,9 @@ import qualified Data.ByteString               as BS
 import qualified Data.ByteString.Char8         as BS
                                                 ( putStrLn )
 import qualified Data.ByteString.RawFilePath   as RFP
-import qualified RawFilePath.Directory   as RFP
+import qualified RawFilePath.Directory         as RFP
 
-import qualified System.Posix.ByteString as Posix
+import qualified System.Posix.ByteString       as Posix
 
 import qualified Data.HashTable.IO             as H
 import           Control.Monad.Trans.Reader
@@ -19,8 +19,8 @@ import           System.INotify
 import           Whd                     hiding ( main )
 import           LibWormhole
 import           Control.Concurrent.STM
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.IO as T
+import qualified Data.Text.Encoding            as T
+import qualified Data.Text.IO                  as T
 
 
 waitForApp :: TestEnv App ()
@@ -39,7 +39,7 @@ runDefaultApp testContext action = liftIO $ do
       { cntxINotify      = inotify
       , cntxObjectStore  = objectStore
       , cntxRootTree     = rootTree
-      , cntxStateRoot    = testCntxStateRoot testContext 
+      , cntxStateRoot    = testCntxStateRoot testContext
       , cntxINotifyQueue = Just $ testCntxQueue testContext
       }
     )
@@ -60,7 +60,10 @@ withTestEnv action = do
   tmpDirA   <- Posix.mkdtemp $ cwd </> "testdir/test_a_"
   tmpDirB   <- Posix.mkdtemp $ cwd </> "testdir/test_b_"
   stateRoot <- Posix.mkdtemp $ cwd </> "testdir/stateroot_"
-  BS.putStrLn $ "testdirs where A=" <> tmpDirA <> ", B=" <> tmpDirB <> ",testRoot=" <> stateRoot
+  BS.putStrLn $  "DIR_A=" <> tmpDirA
+  BS.putStrLn $  "DIR_B=" <> tmpDirB
+  BS.putStrLn $  "STATE_DIR=" <> stateRoot
+
   queue <- atomically newTQueue
   let testContext = TestContext
         { testCntxTmpDirA   = tmpDirA
@@ -69,7 +72,7 @@ withTestEnv action = do
         , testCntxStateRoot = stateRoot
         }
   out <- runDefaultApp testContext $ flip runReaderT testContext $ do
-    inApp ensureStateDirIsSetup 
+    inApp ensureStateDirIsSetup
     action
   RFP.removeDirectoryRecursive tmpDirA
   RFP.removeDirectoryRecursive tmpDirB
@@ -85,9 +88,16 @@ getTmpDirB = fmap testCntxTmpDirB ask
 getStateDir :: Monad m => TestEnv m Posix.RawFilePath
 getStateDir = fmap testCntxStateRoot ask
 
-writeFileTestEnv :: MonadIO m => Posix.RawFilePath -> BS.ByteString -> TestEnv m ()
-writeFileTestEnv filepath contents = do
+writeFileTestEnvA
+  :: MonadIO m => Posix.RawFilePath -> BS.ByteString -> TestEnv m ()
+writeFileTestEnvA filepath contents = do
   dirPath <- getTmpDirA
+  liftIO $ RFP.writeFile (dirPath <> "/" <> filepath) contents
+
+writeFileTestEnvB
+  :: MonadIO m => Posix.RawFilePath -> BS.ByteString -> TestEnv m ()
+writeFileTestEnvB filepath contents = do
+  dirPath <- getTmpDirB
   liftIO $ RFP.writeFile (dirPath <> "/" <> filepath) contents
 
 deleteFileTestEnv :: MonadIO m => Posix.RawFilePath -> TestEnv m ()
@@ -108,11 +118,11 @@ main :: IO ()
 main = hspec spec
 
 setup :: IO ()
-setup =  do
-    cwd <- Posix.getWorkingDirectory
-    let tmpdir = cwd </> "testdir"
-    whenM (Posix.fileExist tmpdir) $ RFP.removeDirectoryRecursive tmpdir
-    Posix.createDirectory tmpdir Posix.ownerModes
+setup = do
+  cwd <- Posix.getWorkingDirectory
+  let tmpdir = cwd </> "testdir"
+  whenM (Posix.fileExist tmpdir) $ RFP.removeDirectoryRecursive tmpdir
+  Posix.createDirectory tmpdir Posix.ownerModes
 
 spec :: Spec
 spec = beforeAll_ setup $ do
@@ -142,7 +152,7 @@ spec = beforeAll_ setup $ do
         "should add a file when presented with a directory with a single file in it"
       $ withTestEnv
       $ do
-          writeFileTestEnv "hello.txt" "hello world"
+          writeFileTestEnvA "hello.txt" "hello world"
 
           dirPath <- getTmpDirA
           inApp $ startProjectSync dirPath
@@ -155,7 +165,7 @@ spec = beforeAll_ setup $ do
 
 
     it "should remove a file when the file is deleted" $ withTestEnv $ do
-      writeFileTestEnv "hello.txt" "hello world"
+      writeFileTestEnvA "hello.txt" "hello world"
       dirPath <- getTmpDirA
       inApp $ startProjectSync dirPath
       deleteFileTestEnv "hello.txt"
@@ -173,7 +183,7 @@ spec = beforeAll_ setup $ do
           dirPath <- getTmpDirA
           inApp $ startProjectSync dirPath
 
-          writeFileTestEnv "hello.txt" "hello world"
+          writeFileTestEnvA "hello.txt" "hello world"
           waitForApp
 
           outTable <- fmap unTree $ inApp getRootTree
@@ -212,17 +222,34 @@ spec = beforeAll_ setup $ do
       stateDir <- getStateDir
       inApp $ checkoutProject "checkoutName" dirPathA
 
-      linksTo <- liftIO $ Posix.readSymbolicLink $ stateDir </> "checkouts" </> "checkoutName"
+      linksTo <-
+        liftIO
+        $   Posix.readSymbolicLink
+        $   stateDir
+        </> "checkouts"
+        </> "checkoutName"
       liftIO $ linksTo `shouldBe` dirPathA
 
-    it "checkoutProject on a directory with a file in it adds that file to the project" $ pending
-      
+    it
+        "checkoutProject will clone files in an existing project into a second checkout"
+      $ withTestEnv
+      $ do
+          dirPathA <- getTmpDirA
+          dirPathB <- getTmpDirB
+          writeFileTestEnvA "hello.txt" "hello world"
+          inApp $ checkoutProject "checkoutA" dirPathA
+          inApp $ checkoutProject "checkoutB" dirPathB
+
+          liftIO
+            $ unlessM (Posix.fileExist $ dirPathB </> "hello.txt")
+            $ expectationFailure "hello.txt was not copied"
+
 
   --  it "" $ withTestEnv $ do
   --    dirPathA <- getTmpDirA
   --    dirPathB <- getTmpDirB
 
-  --    writeFileTestEnv "hello.txt" "content"
+  --    writeFileTestEnvA "hello.txt" "content"
 
   --    inApp $ startProjectSync dirPathA
   --    inApp $ startProjectSync dirPathB
@@ -235,9 +262,9 @@ spec = beforeAll_ setup $ do
   --  $ withTestEnv
   --  $ do
   --      dirPath <- getTmpDirA
-  --      writeFileTestEnv "hello.txt" "hello dump"
+  --      writeFileTestEnvA "hello.txt" "hello dump"
   --      mkDirTestEnv "subdir"
-  --      writeFileTestEnv "subdir/subfile" "subfile contents"
+  --      writeFileTestEnvA "subdir/subfile" "subfile contents"
   --      inApp $ startProjectSync dirPath
 
   --      outDir <- liftIO $ Posix.mkdtemp "testdir/dumpToDirectory"
