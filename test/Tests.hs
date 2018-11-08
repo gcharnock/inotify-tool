@@ -142,7 +142,7 @@ spec = beforeAll_ setup $ do
       $ withTestEnv
       $ do
           dirPath <- getTmpDirA
-          inApp $ startProjectSync dirPath
+          inApp $ startProjectSync "irrelevent" dirPath
           rootTree <- inApp getRootTree
 
           len      <- liftIO $ fmap length $ H.toList $ unTree rootTree
@@ -155,7 +155,7 @@ spec = beforeAll_ setup $ do
           writeFileTestEnvA "hello.txt" "hello world"
 
           dirPath <- getTmpDirA
-          inApp $ startProjectSync dirPath
+          inApp $ startProjectSync "irrelevent" dirPath
 
           outTable <- fmap unTree $ inApp getRootTree
           outFile  <- liftIO $ H.lookup outTable "hello.txt"
@@ -167,7 +167,7 @@ spec = beforeAll_ setup $ do
     it "should remove a file when the file is deleted" $ withTestEnv $ do
       writeFileTestEnvA "hello.txt" "hello world"
       dirPath <- getTmpDirA
-      inApp $ startProjectSync dirPath
+      inApp $ startProjectSync "irrelevent" dirPath
       deleteFileTestEnv "hello.txt"
 
       waitForApp
@@ -181,7 +181,7 @@ spec = beforeAll_ setup $ do
       $ withTestEnv
       $ do
           dirPath <- getTmpDirA
-          inApp $ startProjectSync dirPath
+          inApp $ startProjectSync "irrelevent" dirPath
 
           writeFileTestEnvA "hello.txt" "hello world"
           waitForApp
@@ -195,7 +195,7 @@ spec = beforeAll_ setup $ do
     it "should add a directory on initial scan" $ withTestEnv $ do
       dirPath <- getTmpDirA
       mkDirTestEnv "testDir"
-      inApp $ startProjectSync dirPath
+      inApp $ startProjectSync "irrelevent" dirPath
       outTable <- fmap unTree $ inApp getRootTree
       outDir   <- liftIO $ H.lookup outTable "testDir"
       liftIO $ outDir `shouldSatisfy` \case
@@ -205,7 +205,7 @@ spec = beforeAll_ setup $ do
 
     it "should directory when one appears" $ withTestEnv $ do
       dirPath <- getTmpDirA
-      inApp $ startProjectSync dirPath
+      inApp $ startProjectSync "irrelevent" dirPath
 
       mkDirTestEnv "testDir"
       waitForApp

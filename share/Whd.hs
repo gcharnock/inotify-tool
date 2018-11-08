@@ -137,7 +137,7 @@ store filehash contents = do
   liftIO $ H.insert cntxObjectStore filehash contents
 
 
-storeFile :: Tree -> RawFilePath -> App ()
+storeFile :: Tree -> RawFilePath -> App FileHash
 storeFile workingTree filepath = do
   fileBytes <- liftIO $ RFP.readFile filepath
   let fileHash = FileHash $ hashWith SHA256 fileBytes
@@ -145,6 +145,7 @@ storeFile workingTree filepath = do
   store fileHash fileBytes
   let (_, filename) = splitFilepath filepath
   liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
+  return fileHash
 
 storeDir :: Tree -> Tree -> RawFilePath -> App ()
 storeDir workingTree subtree filepath = do
@@ -159,8 +160,8 @@ retrive filehash = do
     Nothing       -> error "ERROR: Could not find hash"
     Just contents -> return contents
 
-handleEvent :: Tree -> RawFilePath -> Event -> App ()
-handleEvent workingTree dirPath event = try handler >>= \case
+handleEvent :: T.Text -> Tree -> RawFilePath -> Event -> App ()
+handleEvent checkoutName workingTree dirPath event = try handler >>= \case
   Left  e -> liftIO $ print (e :: SomeException)
   Right _ -> return ()
  where
@@ -173,14 +174,19 @@ handleEvent workingTree dirPath event = try handler >>= \case
           then do
             newWorkingTree <- liftIO $ Tree <$> H.new
             storeDir workingTree newWorkingTree filepath
-            startDirSync newWorkingTree filepath
-          else storeFile workingTree filepath
+            fileHash <- startDirSync checkoutName newWorkingTree filepath []
+            return ()
+          else do
+            filehash <- storeFile workingTree filepath
+            return ()
         broadcastEvent event
 
       Modified { maybeFilePath } -> do
         case maybeFilePath of
           Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
-          Just filename -> storeFile workingTree (dirPath </> filename)
+          Just filename -> do
+            filepash <-storeFile workingTree (dirPath </> filename)
+            return () 
         broadcastEvent event
 
       Deleted { filePath } -> do
@@ -190,15 +196,15 @@ handleEvent workingTree dirPath event = try handler >>= \case
 
       _ -> return ()
 
-watchDirectory :: Tree -> RawFilePath -> App WatchDescriptor
-watchDirectory workingTree filePath = do
+watchDirectory :: T.Text -> Tree -> RawFilePath -> App WatchDescriptor
+watchDirectory checkoutName workingTree filePath = do
   info $ "WATCH " <> T.decodeUtf8 filePath
   Context { cntxINotify } <- ask
   withRunInIO $ \runInIO -> addWatch
     cntxINotify
     watchTypes
     filePath
-    (\event -> runInIO $ handleEvent workingTree filePath event)
+    (\event -> runInIO $ handleEvent checkoutName workingTree filePath event)
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
 dumpToDirectory :: Tree -> RawFilePath -> App ()
@@ -233,6 +239,17 @@ writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
         liftIO $ createDirectoryIfMissing True fullFilePath
         writeOutTree fullFilePath subTree
 
+onNewFile :: T.Text -> [RawFilePath] -> RawFilePath -> FileHash -> App ()
+onNewFile checkoutName projectPath filename fileHash = do
+  checkoutDir <- getCheckoutDir
+  checkouts   <- liftIO $ listDirectory checkoutDir
+  forM_ checkouts $ \checkout ->
+    if T.decodeUtf8 checkout == checkoutName
+      then return ()
+      else do
+        let dirname = checkout </> foldl (</>) "" projectPath
+        file <- retrive fileHash
+        liftIO $ RFP.writeFile (dirname <> filename) file
 
 
 testOutputLoop :: RawFilePath -> App ()
@@ -248,12 +265,12 @@ testOutputLoop filepath = catch inner $ \e -> liftIO $ do
     writeOutTree filepath cntxRootTree
     testOutputLoop filepath
 
-startDirSync :: Tree -> RawFilePath -> App ()
-startDirSync workingTree thisDir = do
+startDirSync :: T.Text -> Tree -> RawFilePath -> [RawFilePath] -> App ()
+startDirSync checkoutName workingTree thisDir projectPath = do
   info $ "SCAN: " <> T.decodeUtf8 thisDir
 
   diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
-  _     <- watchDirectory workingTree thisDir
+  _     <- watchDirectory checkoutName workingTree thisDir
 
   storeFiles <- liftIO $ H.toList $ unTree workingTree 
 
@@ -261,11 +278,13 @@ startDirSync workingTree thisDir = do
     let filepath = thisDir </> filename
     isDirectory <- liftIO $ doesDirectoryExist filepath
     if not isDirectory
-      then storeFile workingTree filepath
+      then do
+        fileHash <- storeFile workingTree filepath
+        onNewFile checkoutName projectPath filename fileHash 
       else do
         newTree <- liftIO $ fmap Tree H.new
         liftIO $ H.insert (unTree workingTree) filename (ContentTree newTree)
-        startDirSync newTree filepath
+        startDirSync checkoutName newTree filepath $ filename : projectPath
 
   forM_ storeFiles $ \(filename, contents) -> do
     let filepath = thisDir </> filename
@@ -276,16 +295,18 @@ startDirSync workingTree thisDir = do
       _ -> return ()
 
 
-startProjectSync :: RawFilePath -> App ()
-startProjectSync thisDir = do
+startProjectSync :: T.Text -> RawFilePath -> App ()
+startProjectSync checkoutName thisDir = do
   rootTree <- getRootTree
-  startDirSync rootTree thisDir
+  startDirSync checkoutName rootTree thisDir []
 
 runAppStartup :: App ()
 runAppStartup = do
   checkoutDir <- getCheckoutDir
   checkouts   <- liftIO $ listDirectory checkoutDir
-  forM_ checkouts $ \filename -> startProjectSync $ checkoutDir </> filename 
+  forM_ checkouts $ \filename -> do 
+    let checkoutName = T.decodeUtf8 filename
+    startProjectSync checkoutName $ checkoutDir </> filename 
 
 checkoutProject :: T.Text -> RawFilePath -> App ()
 checkoutProject checkoutName checkoutTo = do
@@ -295,7 +316,7 @@ checkoutProject checkoutName checkoutTo = do
   info $ "CHECKOUT:" <> checkoutName <> ": " <> T.decodeUtf8 linkFilepath <> " -> " <> T.decodeUtf8 checkoutTo
   liftIO $ whenM (doesFileExist linkFilepath) $ error "project already checked out under that name"
   liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
-  startProjectSync $ linkFilepath
+  startProjectSync checkoutName linkFilepath
   
 
 sendToUser :: BS.ByteString -> UserRequest ()
