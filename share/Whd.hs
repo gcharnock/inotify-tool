@@ -247,9 +247,11 @@ onNewFile checkoutName projectPath filename fileHash = do
     if T.decodeUtf8 checkout == checkoutName
       then return ()
       else do
-        let dirname = checkout </> foldl (</>) "" projectPath
+        let dirname = checkoutDir </> checkout </> foldl (</>) "" projectPath
         file <- retrive fileHash
-        liftIO $ RFP.writeFile (dirname <> filename) file
+        let filepath = dirname </> filename
+        info $ "REPLICATE: " <> T.decodeUtf8 filepath <> " " <> renderFileHash fileHash
+        liftIO $ RFP.writeFile filepath file
 
 
 testOutputLoop :: RawFilePath -> App ()
