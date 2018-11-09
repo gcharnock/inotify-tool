@@ -160,8 +160,8 @@ retrive filehash = do
     Nothing       -> error "ERROR: Could not find hash"
     Just contents -> return contents
 
-handleEvent :: T.Text -> Tree -> RawFilePath -> Event -> App ()
-handleEvent checkoutName workingTree dirPath event = try handler >>= \case
+handleEvent :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> Event -> App ()
+handleEvent checkoutName projectPath workingTree dirPath event = try handler >>= \case
   Left  e -> liftIO $ print (e :: SomeException)
   Right _ -> return ()
  where
@@ -174,10 +174,10 @@ handleEvent checkoutName workingTree dirPath event = try handler >>= \case
           then do
             newWorkingTree <- liftIO $ Tree <$> H.new
             storeDir workingTree newWorkingTree filepath
-            fileHash <- startDirSync checkoutName newWorkingTree filepath []
-            return ()
+            startDirSync checkoutName newWorkingTree filepath []
           else do
             filehash <- storeFile workingTree filepath
+            onNewFile checkoutName projectPath filename filehash  
             return ()
         broadcastEvent event
 
@@ -185,7 +185,7 @@ handleEvent checkoutName workingTree dirPath event = try handler >>= \case
         case maybeFilePath of
           Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
           Just filename -> do
-            filepash <-storeFile workingTree (dirPath </> filename)
+            fileHash <- storeFile workingTree (dirPath </> filename)
             return () 
         broadcastEvent event
 
@@ -196,15 +196,15 @@ handleEvent checkoutName workingTree dirPath event = try handler >>= \case
 
       _ -> return ()
 
-watchDirectory :: T.Text -> Tree -> RawFilePath -> App WatchDescriptor
-watchDirectory checkoutName workingTree filePath = do
+watchDirectory :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> App WatchDescriptor
+watchDirectory checkoutName projectPath workingTree filePath = do
   info $ "WATCH " <> T.decodeUtf8 filePath
   Context { cntxINotify } <- ask
   withRunInIO $ \runInIO -> addWatch
     cntxINotify
     watchTypes
     filePath
-    (\event -> runInIO $ handleEvent checkoutName workingTree filePath event)
+    (\event -> runInIO $ handleEvent checkoutName projectPath workingTree filePath event)
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
 dumpToDirectory :: Tree -> RawFilePath -> App ()
@@ -272,7 +272,7 @@ startDirSync checkoutName workingTree thisDir projectPath = do
   info $ "SCAN: " <> T.decodeUtf8 thisDir
 
   diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
-  _     <- watchDirectory checkoutName workingTree thisDir
+  _     <- watchDirectory checkoutName projectPath workingTree thisDir
 
   storeFiles <- liftIO $ H.toList $ unTree workingTree 
 

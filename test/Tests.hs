@@ -105,11 +105,15 @@ deleteFileTestEnv filepath = do
   dirPath <- getTmpDirA
   liftIO $ Posix.removeLink $ dirPath <> "/" <> filepath
 
-mkDirTestEnv :: MonadIO m => Posix.RawFilePath -> TestEnv m ()
-mkDirTestEnv filepath = do
+mkDirTestEnvA :: MonadIO m => Posix.RawFilePath -> TestEnv m ()
+mkDirTestEnvA filepath = do
   dirPath <- getTmpDirA
   liftIO $ Posix.createDirectory (dirPath <> "/" <> filepath) Posix.ownerModes
 
+mkDirTestEnvB :: MonadIO m => Posix.RawFilePath -> TestEnv m ()
+mkDirTestEnvB filepath = do
+  dirPath <- getTmpDirA
+  liftIO $ Posix.createDirectory (dirPath <> "/" <> filepath) Posix.ownerModes
 
 inApp :: App a -> TestEnv App a
 inApp = lift
@@ -194,7 +198,7 @@ spec = beforeAll_ setup $ do
 
     it "should add a directory on initial scan" $ withTestEnv $ do
       dirPath <- getTmpDirA
-      mkDirTestEnv "testDir"
+      mkDirTestEnvA "testDir"
       inApp $ startProjectSync "irrelevent" dirPath
       outTable <- fmap unTree $ inApp getRootTree
       outDir   <- liftIO $ H.lookup outTable "testDir"
@@ -207,7 +211,7 @@ spec = beforeAll_ setup $ do
       dirPath <- getTmpDirA
       inApp $ startProjectSync "irrelevent" dirPath
 
-      mkDirTestEnv "testDir"
+      mkDirTestEnvA "testDir"
       waitForApp
 
       outTable <- fmap unTree $ inApp getRootTree
@@ -231,7 +235,7 @@ spec = beforeAll_ setup $ do
       liftIO $ linksTo `shouldBe` dirPathA
 
     it
-        "will clone files in an existing project into a second checkout"
+        "will clone files in an existing checkout into a second checkout"
       $ withTestEnv
       $ do
           dirPathA <- getTmpDirA
@@ -244,7 +248,7 @@ spec = beforeAll_ setup $ do
             $ unlessM (Posix.fileExist $ dirPathB </> "hello.txt")
             $ expectationFailure "hello.txt was not copied"
 
-    it "will clone files in the second project back to the existing project"
+    it "will clone files in the second checkout back to the existing project"
       $ withTestEnv
       $ do
           dirPathA <- getTmpDirA
@@ -256,6 +260,43 @@ spec = beforeAll_ setup $ do
           liftIO
             $ unlessM (Posix.fileExist $ dirPathA </> "hello.txt")
             $ expectationFailure "hello.txt was not copied"
+
+  describe "Live replication" $ do
+    it "will clone a new file created in one checkout to all other checkouts"
+      $ withTestEnv
+      $ do
+        --given
+        dirPathA <- getTmpDirA
+        dirPathB <- getTmpDirB
+        inApp $ checkoutProject "checkoutA" dirPathA
+        inApp $ checkoutProject "checkoutB" dirPathB
+
+        --if 
+        writeFileTestEnvB "hello.txt" "hello world"
+        waitForApp
+
+        --then
+        liftIO
+          $ unlessM (Posix.fileExist $ dirPathA </> "hello.txt")
+          $ expectationFailure "hello.txt was not copied"
+
+    it "will clone a new directory created in one checkout to all other checkouts"
+      $ withTestEnv
+      $ do
+        --given
+        dirPathA <- getTmpDirA
+        dirPathB <- getTmpDirB
+        inApp $ checkoutProject "checkoutA" dirPathA
+        inApp $ checkoutProject "checkoutB" dirPathB
+
+        --if 
+        mkDirTestEnvA "testdir"
+        waitForApp
+
+        --then
+        liftIO
+          $ unlessM (RFP.doesDirectoryExist $ dirPathB </> "testdir")
+          $ expectationFailure "directory was not copied"
 
   --  it "" $ withTestEnv $ do
   --    dirPathA <- getTmpDirA
@@ -275,7 +316,7 @@ spec = beforeAll_ setup $ do
   --  $ do
   --      dirPath <- getTmpDirA
   --      writeFileTestEnvA "hello.txt" "hello dump"
-  --      mkDirTestEnv "subdir"
+  --      mkDirTestEnvA "subdir"
   --      writeFileTestEnvA "subdir/subfile" "subfile contents"
   --      inApp $ startProjectSync dirPath
 
