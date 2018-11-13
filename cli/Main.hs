@@ -1,3 +1,4 @@
+{-# LANGUAGE ApplicativeDo #-}
 import           Control.Monad                  ( forever )
 import           Options.Applicative
 import           Data.Monoid                    ( (<>) )
@@ -24,7 +25,6 @@ import           LibWormhole
 import qualified Data.Binary.Put               as Bin
 import           System.Posix.Directory.ByteString
                                                 ( getWorkingDirectory )
-import           Data.Text.Encoding             ( decodeUtf8 )
 
 
 postMessage :: Socket -> ClientMsg -> IO ()
@@ -37,12 +37,19 @@ postMessage sock msg = do
   sentCount <- send sock messageBS
   putStrLn $ "Sent " <> show sentCount <> " bytes"
 
+checkoutP :: Parser Checkout
+checkoutP = do
+  checkoutName <- argument str (metavar "checkoutName")
+  checkoutPath <- argument str (metavar "checkoutPath")
+  return $ Checkout checkoutName $ Base64JSON checkoutPath
+
 cmdParser :: Parser Cmd
 cmdParser = hsubparser $ mconcat
   [ command "tree" $ info (pure TreeCmd) (progDesc "Show the project tree")
   , command "dump" $ info
     (pure DumpCmd)
     (progDesc "Dump the contents of a project on to the filesystem")
+  , command "checkout" $ info (fmap CheckoutCmd checkoutP) (progDesc "Checkout a project")
   ]
 
 openSocket :: IO Socket
@@ -63,6 +70,6 @@ main = do
   cwd <- getWorkingDirectory
   bracket openSocket close $ \sock -> do
     readAsync <- async $ readThread sock
-    postMessage sock $ ClientMsg {cmsgCwd = decodeUtf8 cwd, cmsgCmd = cmd}
+    postMessage sock $ ClientMsg {cmsgCwd = Base64JSON cwd, cmsgCmd = cmd}
     wait readAsync
 

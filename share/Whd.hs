@@ -45,8 +45,8 @@ import qualified Pipes.Binary                  as P
 import qualified Pipes.ByteString              as P
 import qualified Pipes.Parse                   as P
 import qualified Data.Binary.Get               as Bin
-import qualified System.Posix.ByteString as Posix
-import Control.Concurrent.STM
+import qualified System.Posix.ByteString       as Posix
+import           Control.Concurrent.STM
 
 type HashTable k v = H.BasicHashTable k v
 newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
@@ -82,7 +82,7 @@ whenM test action = test >>= \case
 unlessM :: Monad m => m Bool -> m () -> m ()
 unlessM test action = test >>= \case
   True  -> return ()
-  False -> action 
+  False -> action
 
 type App = ReaderT Context IO
 
@@ -103,7 +103,7 @@ data UserReqContext = UserReqContext {
 
 broadcastEvent :: Event -> App ()
 broadcastEvent event = ask >>= \case
-  Context {  cntxINotifyQueue = Just queue } ->
+  Context { cntxINotifyQueue = Just queue } ->
     liftIO $ atomically $ writeTQueue queue event
   _ -> return ()
 
@@ -161,9 +161,10 @@ retrive filehash = do
     Just contents -> return contents
 
 handleEvent :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> Event -> App ()
-handleEvent checkoutName projectPath workingTree dirPath event = try handler >>= \case
-  Left  e -> liftIO $ print (e :: SomeException)
-  Right _ -> return ()
+handleEvent checkoutName projectPath workingTree dirPath event =
+  try handler >>= \case
+    Left  e -> liftIO $ print (e :: SomeException)
+    Right _ -> return ()
  where
   handler = do
     liftIO $ print event
@@ -177,16 +178,17 @@ handleEvent checkoutName projectPath workingTree dirPath event = try handler >>=
             startDirSync checkoutName newWorkingTree filepath []
           else do
             filehash <- storeFile workingTree filepath
-            onNewFile checkoutName projectPath filename filehash  
+            onNewFile checkoutName projectPath filename filehash
             return ()
         broadcastEvent event
 
       Modified { maybeFilePath } -> do
         case maybeFilePath of
-          Nothing -> info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
+          Nothing ->
+            info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
           Just filename -> do
-            fileHash <- storeFile workingTree (dirPath </> filename)
-            return () 
+            _ <- storeFile workingTree (dirPath </> filename)
+            return ()
         broadcastEvent event
 
       Deleted { filePath } -> do
@@ -196,7 +198,8 @@ handleEvent checkoutName projectPath workingTree dirPath event = try handler >>=
 
       _ -> return ()
 
-watchDirectory :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> App WatchDescriptor
+watchDirectory
+  :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> App WatchDescriptor
 watchDirectory checkoutName projectPath workingTree filePath = do
   info $ "WATCH " <> T.decodeUtf8 filePath
   Context { cntxINotify } <- ask
@@ -204,7 +207,9 @@ watchDirectory checkoutName projectPath workingTree filePath = do
     cntxINotify
     watchTypes
     filePath
-    (\event -> runInIO $ handleEvent checkoutName projectPath workingTree filePath event)
+    (\event -> runInIO
+      $ handleEvent checkoutName projectPath workingTree filePath event
+    )
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
 dumpToDirectory :: Tree -> RawFilePath -> App ()
@@ -243,15 +248,18 @@ onNewFile :: T.Text -> [RawFilePath] -> RawFilePath -> FileHash -> App ()
 onNewFile checkoutName projectPath filename fileHash = do
   checkoutDir <- getCheckoutDir
   checkouts   <- liftIO $ listDirectory checkoutDir
-  forM_ checkouts $ \checkout ->
-    if T.decodeUtf8 checkout == checkoutName
-      then return ()
-      else do
-        let dirname = checkoutDir </> checkout </> foldl (</>) "" projectPath
-        file <- retrive fileHash
-        let filepath = dirname </> filename
-        info $ "REPLICATE: " <> T.decodeUtf8 filepath <> " " <> renderFileHash fileHash
-        liftIO $ RFP.writeFile filepath file
+  forM_ checkouts $ \checkout -> if T.decodeUtf8 checkout == checkoutName
+    then return ()
+    else do
+      let dirname = checkoutDir </> checkout </> foldl (</>) "" projectPath
+      file <- retrive fileHash
+      let filepath = dirname </> filename
+      info
+        $  "REPLICATE: "
+        <> T.decodeUtf8 filepath
+        <> " "
+        <> renderFileHash fileHash
+      liftIO $ RFP.writeFile filepath file
 
 
 testOutputLoop :: RawFilePath -> App ()
@@ -271,10 +279,10 @@ startDirSync :: T.Text -> Tree -> RawFilePath -> [RawFilePath] -> App ()
 startDirSync checkoutName workingTree thisDir projectPath = do
   info $ "SCAN: " <> T.decodeUtf8 thisDir
 
-  diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
-  _     <- watchDirectory checkoutName projectPath workingTree thisDir
+  diskFiles  <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
+  _          <- watchDirectory checkoutName projectPath workingTree thisDir
 
-  storeFiles <- liftIO $ H.toList $ unTree workingTree 
+  storeFiles <- liftIO $ H.toList $ unTree workingTree
 
   forM_ (map BS.pack diskFiles) $ \filename -> do
     let filepath = thisDir </> filename
@@ -282,7 +290,7 @@ startDirSync checkoutName workingTree thisDir projectPath = do
     if not isDirectory
       then do
         fileHash <- storeFile workingTree filepath
-        onNewFile checkoutName projectPath filename fileHash 
+        onNewFile checkoutName projectPath filename fileHash
       else do
         newTree <- liftIO $ fmap Tree H.new
         liftIO $ H.insert (unTree workingTree) filename (ContentTree newTree)
@@ -306,20 +314,29 @@ runAppStartup :: App ()
 runAppStartup = do
   checkoutDir <- getCheckoutDir
   checkouts   <- liftIO $ listDirectory checkoutDir
-  forM_ checkouts $ \filename -> do 
+  forM_ checkouts $ \filename -> do
     let checkoutName = T.decodeUtf8 filename
-    startProjectSync checkoutName $ checkoutDir </> filename 
+    startProjectSync checkoutName $ checkoutDir </> filename
 
 checkoutProject :: T.Text -> RawFilePath -> App ()
 checkoutProject checkoutName checkoutTo = do
   checkoutDir <- getCheckoutDir
   info $ "checkoutDir = " <> T.decodeUtf8 checkoutDir
-  let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName 
-  info $ "CHECKOUT:" <> checkoutName <> ": " <> T.decodeUtf8 linkFilepath <> " -> " <> T.decodeUtf8 checkoutTo
-  liftIO $ whenM (doesFileExist linkFilepath) $ error "project already checked out under that name"
+  let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName
+  info
+    $  "CHECKOUT:"
+    <> checkoutName
+    <> ": "
+    <> T.decodeUtf8 linkFilepath
+    <> " -> "
+    <> T.decodeUtf8 checkoutTo
+  liftIO $ whenM (doesFileExist linkFilepath) $ error
+    "project already checked out under that name"
   liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
+  liftIO $ unlessM (doesFileExist checkoutTo) $
+    Posix.createDirectory checkoutTo Posix.ownerModes
   startProjectSync checkoutName linkFilepath
-  
+
 
 sendToUser :: BS.ByteString -> UserRequest ()
 sendToUser message = do
@@ -341,13 +358,21 @@ printTree indent tree =
               printTree (indent + 2) innerTree
 
 processMessage :: ClientMsg -> UserRequest ()
-processMessage ClientMsg { cmsgCmd, cmsgCwd } = case cmsgCmd of
-  TreeCmd -> do
-    Context { cntxRootTree } <- lift ask
-    printTree 0 cntxRootTree
-  DumpCmd -> do
-    Context { cntxRootTree } <- lift ask
-    lift $ dumpToDirectory cntxRootTree (T.encodeUtf8 cmsgCwd)
+processMessage ClientMsg { cmsgCmd, cmsgCwd = Base64JSON cwd } =
+  case cmsgCmd of
+    TreeCmd -> do
+      Context { cntxRootTree } <- lift ask
+      printTree 0 cntxRootTree
+    DumpCmd -> do
+      Context { cntxRootTree } <- lift ask
+      lift $ dumpToDirectory cntxRootTree cwd
+    CheckoutCmd checkout -> processCheckoutMessage cwd checkout
+      
+
+processCheckoutMessage :: RawFilePath -> Checkout -> UserRequest ()
+processCheckoutMessage cwd (Checkout checkoutName (Base64JSON checkoutDir)) = do
+  let absCheckoutDir = cwd </> checkoutDir
+  lift $ checkoutProject checkoutName absCheckoutDir 
 
 clientDecoder :: P.Parser BS.ByteString UserRequest ()
 clientDecoder = P.decodeGet Bin.getWord16be >>= \case
@@ -392,8 +417,10 @@ acceptLoop sock = do
 
 ensureStateDirIsSetup :: App ()
 ensureStateDirIsSetup = do
-  checkoutDir <- getCheckoutDir 
-  liftIO $ whenM (not <$> Posix.fileExist checkoutDir) $ Posix.createDirectory checkoutDir Posix.ownerModes
+  checkoutDir <- getCheckoutDir
+  liftIO $ whenM (not <$> Posix.fileExist checkoutDir) $ Posix.createDirectory
+    checkoutDir
+    Posix.ownerModes
 
 runApp :: App ()
 runApp = do
@@ -413,10 +440,10 @@ main = do
     Just homeDir -> withINotify $ \inotify -> runReaderT
       runApp
       (Context
-        { cntxINotify     = inotify
-        , cntxObjectStore = objectStore
-        , cntxRootTree    = rootTree
-        , cntxStateRoot   = homeDir <> "/var/wh"
+        { cntxINotify      = inotify
+        , cntxObjectStore  = objectStore
+        , cntxRootTree     = rootTree
+        , cntxStateRoot    = homeDir <> "/var/wh"
         , cntxINotifyQueue = Nothing
         }
       )

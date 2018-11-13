@@ -52,7 +52,8 @@ library
                        pipes-bytestring,
                        binary,
                        unix,
-                       stm
+                       stm,
+                       rainbow
 
 executable wh
   main-is:             Main.hs
