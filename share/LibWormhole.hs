@@ -9,7 +9,6 @@ import           Data.Aeson.Types
 import qualified Data.Aeson                    as Aeson
                                                 ( Value(..) )
 import           GHC.Generics
-import           Data.Monoid
 import           Data.ByteString               as BS
 import           System.Posix.ByteString.FilePath
 import           System.Posix.Directory.ByteString

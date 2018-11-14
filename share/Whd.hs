@@ -47,10 +47,9 @@ import qualified Pipes.Parse                   as P
 import qualified Data.Binary.Get               as Bin
 import qualified System.Posix.ByteString       as Posix
 import           Control.Concurrent.STM
+import ObjectStore (storeFile, storeDir, ObjectStore(..), Tree(..), TreeContent(..))
+import Logger
 
-type HashTable k v = H.BasicHashTable k v
-newtype FileHash = FileHash { unFileHash :: (Digest SHA256) }
-  deriving (Show, Eq)
 
 showT :: Show a => a -> T.Text
 showT = T.pack . show
@@ -58,17 +57,10 @@ showT = T.pack . show
 showBS :: Show a => a -> BS.ByteString
 showBS = BS.pack . show
 
-instance Hashable FileHash where
-  hashWithSalt salt (FileHash a) = hashWithSalt salt $ (convert a :: BS.ByteString)
-
-data TreeContent = ContentFile FileHash | ContentTree Tree
-  deriving Show
-
-newtype Tree = Tree { unTree :: HashTable RawFilePath TreeContent } deriving (Show)
 
 data Context = Context {
   cntxINotify :: INotify,
-  cntxObjectStore :: HashTable FileHash BS.ByteString,
+  cntxObjectStore :: ObjectStore,
   cntxRootTree :: Tree,
   cntxStateRoot :: RawFilePath,
   cntxINotifyQueue :: Maybe (TQueue Event)
@@ -85,6 +77,9 @@ unlessM test action = test >>= \case
   False -> action
 
 type App = ReaderT Context IO
+
+instance HasLogger App where
+  info = liftIO . T.putStrLn
 
 getRootTree :: App Tree
 getRootTree = fmap cntxRootTree ask
@@ -114,16 +109,6 @@ infixr 5 </>
 (</>) :: RawFilePath -> RawFilePath -> RawFilePath
 a </> b = UTF8.fromString $ (UTF8.toString a) FP.</> (UTF8.toString b)
 
-renderFileHash :: FileHash -> T.Text
-renderFileHash = T.decodeUtf8 . convertToBase Base64 . unFileHash
-
-sha256File :: MonadIO m => RawFilePath -> m (Digest SHA256)
-sha256File filepath = do
-  fileBytes <- liftIO $ RFP.readFile filepath
-  return $ hashWith SHA256 fileBytes
-
-info :: MonadIO m => T.Text -> m ()
-info = liftIO . T.putStrLn
 
 
 forTree
@@ -131,27 +116,6 @@ forTree
 forTree tree action =
   withRunInIO $ \runInIO -> H.mapM_ (\a -> runInIO $ action a) (unTree tree)
 
-store :: FileHash -> BS.ByteString -> App ()
-store filehash contents = do
-  Context { cntxObjectStore } <- ask
-  liftIO $ H.insert cntxObjectStore filehash contents
-
-
-storeFile :: Tree -> RawFilePath -> App FileHash
-storeFile workingTree filepath = do
-  fileBytes <- liftIO $ RFP.readFile filepath
-  let fileHash = FileHash $ hashWith SHA256 fileBytes
-  info $ "STORE: " <> renderFileHash fileHash <> " " <> T.decodeUtf8 filepath
-  store fileHash fileBytes
-  let (_, filename) = splitFilepath filepath
-  liftIO $ H.insert (unTree workingTree) filename (ContentFile fileHash)
-  return fileHash
-
-storeDir :: Tree -> Tree -> RawFilePath -> App ()
-storeDir workingTree subtree filepath = do
-  info $ "STOREDIR: " <> T.decodeUtf8 filepath
-  let (_, filename) = splitFilepath filepath
-  liftIO $ H.insert (unTree workingTree) filename (ContentTree subtree)
 
 retrive :: FileHash -> App BS.ByteString
 retrive filehash = do

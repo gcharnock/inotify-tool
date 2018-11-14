@@ -17,6 +17,8 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     LibWormhole,
+                       ObjectStore,
+                       FileWatcher,
                        Whd
   hs-source-dirs:      share
   ghc-options:         -Wall
