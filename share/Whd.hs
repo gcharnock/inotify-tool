@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-} -- for the temp MonadIO logger while we refactor
 module Whd where
 
 import           Control.Monad.Trans            ( lift )
@@ -48,7 +49,7 @@ import qualified Data.Binary.Get               as Bin
 import           Control.Concurrent.STM
 import Object
 import Tree
-import ObjectStore (storeFile, storeDir, ObjectStore(..), TreeContent(..), HasStore, getStore)
+import ObjectStore (storeFile, storeDir, ObjectStore(..), TreeContent(..), HasStore, getStore, retrive)
 import Logger
 import Utils
 import Filesystem
@@ -81,9 +82,9 @@ getCheckoutDir = do
 instance Monad m => HasStore (ReaderT Context m) where
   getStore = asks cntxObjectStore
 
-class Monad m => HasLogger (ReaderT Context m) where
-    trace :: T.Text -> m ()
-    info :: T.Text -> m ()
+instance MonadIO m => HasLogger m where
+    trace = liftIO . T.putStrLn
+    info = liftIO . T.putStrLn
 
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
@@ -175,7 +176,7 @@ writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
           $  "OUTPUT: "
           <> T.decodeUtf8 fullFilePath
           <> " "
-          <> renderFileHash fileHash
+          <> renderObjectHash fileHash
         liftIO $ RFP.writeFile fullFilePath fileContents
       ContentTree subTree -> do
         liftIO $ createDirectoryIfMissing True fullFilePath
@@ -195,7 +196,7 @@ onNewFile checkoutName projectPath filename fileHash = do
         $  "REPLICATE: "
         <> T.decodeUtf8 filepath
         <> " "
-        <> renderFileHash fileHash
+        <> renderObjectHash fileHash
       liftIO $ RFP.writeFile filepath file
 
 
