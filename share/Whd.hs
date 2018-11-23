@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 module Whd where
 
 import           Control.Monad.Trans            ( lift )
@@ -18,7 +19,6 @@ import qualified Data.ByteString.UTF8          as UTF8
 import qualified Data.ByteString.RawFilePath   as RFP
                                          hiding ( putStrLn )
 import qualified Data.ByteString.Char8         as BS
-import           RawFilePath.Directory
 import           Control.Monad
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
@@ -45,17 +45,15 @@ import qualified Pipes.Binary                  as P
 import qualified Pipes.ByteString              as P
 import qualified Pipes.Parse                   as P
 import qualified Data.Binary.Get               as Bin
-import qualified System.Posix.ByteString       as Posix
 import           Control.Concurrent.STM
-import ObjectStore (storeFile, storeDir, ObjectStore(..), Tree(..), TreeContent(..))
+import Object
+import Tree
+import ObjectStore (storeFile, storeDir, ObjectStore(..), TreeContent(..), HasStore, getStore)
 import Logger
+import Utils
+import Filesystem
+import qualified System.Posix.ByteString as Posix
 
-
-showT :: Show a => a -> T.Text
-showT = T.pack . show
-
-showBS :: Show a => a -> BS.ByteString
-showBS = BS.pack . show
 
 
 data Context = Context {
@@ -66,20 +64,8 @@ data Context = Context {
   cntxINotifyQueue :: Maybe (TQueue Event)
 }
 
-whenM :: Monad m => m Bool -> m () -> m ()
-whenM test action = test >>= \case
-  True  -> action
-  False -> return ()
-
-unlessM :: Monad m => m Bool -> m () -> m ()
-unlessM test action = test >>= \case
-  True  -> return ()
-  False -> action
 
 type App = ReaderT Context IO
-
-instance HasLogger App where
-  info = liftIO . T.putStrLn
 
 getRootTree :: App Tree
 getRootTree = fmap cntxRootTree ask
@@ -92,6 +78,13 @@ getCheckoutDir = do
   stateRoot <- getStateRoot
   return $ stateRoot </> "checkouts"
 
+instance Monad m => HasStore (ReaderT Context m) where
+  getStore = asks cntxObjectStore
+
+class Monad m => HasLogger (ReaderT Context m) where
+    trace :: T.Text -> m ()
+    info :: T.Text -> m ()
+
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
 }
@@ -103,26 +96,6 @@ broadcastEvent event = ask >>= \case
   _ -> return ()
 
 type UserRequest = ReaderT UserReqContext App
-
-infixr 5 </>
-
-(</>) :: RawFilePath -> RawFilePath -> RawFilePath
-a </> b = UTF8.fromString $ (UTF8.toString a) FP.</> (UTF8.toString b)
-
-
-
-forTree
-  :: MonadUnliftIO m => Tree -> ((RawFilePath, TreeContent) -> m ()) -> m ()
-forTree tree action =
-  withRunInIO $ \runInIO -> H.mapM_ (\a -> runInIO $ action a) (unTree tree)
-
-
-retrive :: FileHash -> App BS.ByteString
-retrive filehash = do
-  Context { cntxObjectStore } <- ask
-  liftIO $ H.lookup cntxObjectStore filehash >>= \case
-    Nothing       -> error "ERROR: Could not find hash"
-    Just contents -> return contents
 
 handleEvent :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> Event -> App ()
 handleEvent checkoutName projectPath workingTree dirPath event =
@@ -137,7 +110,7 @@ handleEvent checkoutName projectPath workingTree dirPath event =
         let filepath = dirPath </> filename
         if isDirectory
           then do
-            newWorkingTree <- liftIO $ Tree <$> H.new
+            newWorkingTree <- newTree 
             storeDir workingTree newWorkingTree filepath
             startDirSync checkoutName newWorkingTree filepath []
           else do
@@ -157,7 +130,7 @@ handleEvent checkoutName projectPath workingTree dirPath event =
 
       Deleted { filePath } -> do
         info $ "REMOVE: " <> T.decodeUtf8 filePath
-        liftIO $ H.delete (unTree workingTree) filePath
+        removeFromTree workingTree filePath
         broadcastEvent event
 
       _ -> return ()
@@ -208,7 +181,7 @@ writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
         liftIO $ createDirectoryIfMissing True fullFilePath
         writeOutTree fullFilePath subTree
 
-onNewFile :: T.Text -> [RawFilePath] -> RawFilePath -> FileHash -> App ()
+onNewFile :: T.Text -> [RawFilePath] -> RawFilePath -> ObjectHash -> App ()
 onNewFile checkoutName projectPath filename fileHash = do
   checkoutDir <- getCheckoutDir
   checkouts   <- liftIO $ listDirectory checkoutDir
@@ -315,8 +288,8 @@ printTree indent tree =
           replicateM_ indent $ sendToUser " "
           sendToUser $ filename <> " -> "
           case contents of
-            ContentFile (FileHash fileHash) ->
-              sendToUser $ showBS fileHash <> "\n"
+            ContentFile objectHash ->
+              sendToUser $ renderObjectHashBS objectHash <> "\n"
             ContentTree innerTree -> do
               sendToUser "\n"
               printTree (indent + 2) innerTree

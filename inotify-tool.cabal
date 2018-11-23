@@ -17,8 +17,11 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     LibWormhole,
+                       Object,
                        ObjectStore,
+                       Tree,
                        FileWatcher,
+                       Utils,
                        Whd
   hs-source-dirs:      share
   ghc-options:         -Wall
@@ -55,7 +58,8 @@ library
                        binary,
                        unix,
                        stm,
-                       rainbow
+                       rainbow,
+                       monad-logger
 
 executable wh
   main-is:             Main.hs
