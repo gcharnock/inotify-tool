@@ -4,19 +4,16 @@ module Whd where
 
 import           Control.Monad.Trans            ( lift )
 import qualified System.Directory              as Sys
-import           Data.Monoid
 import           System.IO
 import           UnliftIO.Exception
 import           UnliftIO.Async
 import           Control.Monad.IO.Class
-import qualified System.FilePath               as FP
 import qualified Data.ByteString               as BS
                                          hiding ( hPutStrLn
                                                 , putStrLn
                                                 , unpack
                                                 , pack
                                                 )
-import qualified Data.ByteString.UTF8          as UTF8
 import qualified Data.ByteString.RawFilePath   as RFP
                                          hiding ( putStrLn )
 import qualified Data.ByteString.Char8         as BS
@@ -26,18 +23,8 @@ import qualified Data.Text.Encoding            as T
 import qualified Data.Text.IO                  as T
 import           Control.Concurrent
 import           System.INotify
-import           Crypto.Hash                    ( Digest
-                                                , SHA256(..)
-                                                , hashWith
-                                                )
-import           Data.ByteArray.Encoding        ( convertToBase
-                                                , Base(..)
-                                                )
 import           Control.Monad.Trans.Reader
-import qualified Data.HashTable.IO             as H
 import           Control.Monad.IO.Unlift
-import           Data.Hashable
-import           Data.ByteArray
 import           Network.Socket
 import           Data.Aeson
 import           LibWormhole
@@ -49,7 +36,7 @@ import qualified Data.Binary.Get               as Bin
 import           Control.Concurrent.STM
 import Object
 import Tree
-import ObjectStore (storeFile, storeDir, ObjectStore(..), TreeContent(..), HasStore, getStore, retrive)
+import ObjectStore
 import Logger
 import Utils
 import Filesystem
@@ -220,8 +207,6 @@ startDirSync checkoutName workingTree thisDir projectPath = do
   diskFiles  <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
   _          <- watchDirectory checkoutName projectPath workingTree thisDir
 
-  storeFiles <- liftIO $ H.toList $ unTree workingTree
-
   forM_ (map BS.pack diskFiles) $ \filename -> do
     let filepath = thisDir </> filename
     isDirectory <- liftIO $ doesDirectoryExist filepath
@@ -230,11 +215,11 @@ startDirSync checkoutName workingTree thisDir projectPath = do
         fileHash <- storeFile workingTree filepath
         onNewFile checkoutName projectPath filename fileHash
       else do
-        newTree <- liftIO $ fmap Tree H.new
-        liftIO $ H.insert (unTree workingTree) filename (ContentTree newTree)
+        newTree <- newTree 
+        liftIO $ addDirToTree workingTree filename newTree
         startDirSync checkoutName newTree filepath $ filename : projectPath
 
-  forM_ storeFiles $ \(filename, contents) -> do
+  forTree workingTree $ \(filename, contents) -> do
     let filepath = thisDir </> filename
     case contents of
       ContentFile filehash -> do
@@ -284,7 +269,7 @@ sendToUser message = do
 printTree :: Int -> Tree -> UserRequest ()
 printTree indent tree =
   withRunInIO
-    $ \runInIO -> flip H.mapM_ (unTree tree) $ \(filename, contents) ->
+    $ \runInIO -> forTree tree $ \(filename, contents) ->
         runInIO $ do
           replicateM_ indent $ sendToUser " "
           sendToUser $ filename <> " -> "
@@ -371,8 +356,8 @@ runApp = do
 
 main :: IO ()
 main = do
-  objectStore <- H.new
-  rootTree    <- fmap Tree H.new
+  objectStore <- newInMemoryStore
+  rootTree    <- newTree 
   getHomeDirectory >>= \case
     Nothing      -> error "could not get $HOME"
     Just homeDir -> withINotify $ \inotify -> runReaderT

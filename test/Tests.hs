@@ -1,7 +1,6 @@
 module Main where
 
 import           Control.Monad.Trans.Class
-import           Data.Monoid
 import           Control.Monad.IO.Class
 import           Test.Hspec
 import qualified Data.ByteString               as BS
@@ -13,15 +12,18 @@ import qualified RawFilePath.Directory         as RFP
 
 import qualified System.Posix.ByteString       as Posix
 
-import qualified Data.HashTable.IO             as H
 import           Control.Monad.Trans.Reader
 import           System.INotify
-import           Whd                     hiding ( main )
-import           LibWormhole
 import           Control.Concurrent.STM
 import qualified Data.Text.Encoding            as T
 import qualified Data.Text.IO                  as T
 
+import           LibWormhole
+import           Whd                     hiding ( main )
+import Tree
+import ObjectStore
+import Filesystem
+import Utils
 
 waitForApp :: TestEnv App ()
 waitForApp = do
@@ -31,8 +33,8 @@ waitForApp = do
 
 runDefaultApp :: MonadIO m => TestContext -> App a -> m a
 runDefaultApp testContext action = liftIO $ do
-  objectStore <- H.new
-  rootTree    <- fmap Tree H.new
+  objectStore <- newInMemoryStore
+  rootTree    <- newTree
   withINotify $ \inotify -> runReaderT
     action
     (Context
@@ -149,7 +151,7 @@ spec = beforeAll_ setup $ do
           inApp $ startProjectSync "irrelevent" dirPath
           rootTree <- inApp getRootTree
 
-          len      <- liftIO $ fmap length $ H.toList $ unTree rootTree
+          len      <- getTreeLen rootTree
           liftIO $ len `shouldBe` 0
 
     it
@@ -161,8 +163,8 @@ spec = beforeAll_ setup $ do
           dirPath <- getTmpDirA
           inApp $ startProjectSync "irrelevent" dirPath
 
-          outTable <- fmap unTree $ inApp getRootTree
-          outFile  <- liftIO $ H.lookup outTable "hello.txt"
+          outTable <- inApp getRootTree
+          outFile  <- treeLookup outTable "hello.txt"
           liftIO $ outFile `shouldSatisfy` \case
             Just (ContentFile _) -> True
             _                    -> False
@@ -177,7 +179,7 @@ spec = beforeAll_ setup $ do
       waitForApp
 
       rootTree <- inApp getRootTree
-      len      <- liftIO $ fmap length $ H.toList $ unTree rootTree
+      len      <- getTreeLen rootTree
       liftIO $ len `shouldBe` 0
 
 
@@ -190,8 +192,8 @@ spec = beforeAll_ setup $ do
           writeFileTestEnvA "hello.txt" "hello world"
           waitForApp
 
-          outTable <- fmap unTree $ inApp getRootTree
-          outFile  <- liftIO $ H.lookup outTable "hello.txt"
+          rootTree <- inApp getRootTree
+          outFile  <- treeLookup rootTree "hello.txt"
           liftIO $ outFile `shouldSatisfy` \case
             Just (ContentFile _) -> True
             _                    -> False
@@ -200,8 +202,8 @@ spec = beforeAll_ setup $ do
       dirPath <- getTmpDirA
       mkDirTestEnvA "testDir"
       inApp $ startProjectSync "irrelevent" dirPath
-      outTable <- fmap unTree $ inApp getRootTree
-      outDir   <- liftIO $ H.lookup outTable "testDir"
+      rootTree <- inApp getRootTree
+      outDir   <- treeLookup rootTree "testDir"
       liftIO $ outDir `shouldSatisfy` \case
         Just (ContentTree _) -> True
         _                    -> False
@@ -214,8 +216,8 @@ spec = beforeAll_ setup $ do
       mkDirTestEnvA "testDir"
       waitForApp
 
-      outTable <- fmap unTree $ inApp getRootTree
-      outDir   <- liftIO $ H.lookup outTable "testDir"
+      rootTree <- inApp getRootTree
+      outDir   <- treeLookup rootTree "testDir"
       liftIO $ outDir `shouldSatisfy` \case
         Just (ContentTree _) -> True
         _                    -> False

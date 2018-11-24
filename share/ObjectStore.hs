@@ -58,8 +58,8 @@ storeFile workingTree filepath = do
 
 retrive :: StoreConstr m => ObjectHash -> m BS.ByteString
 retrive filehash = do
-  store <- getStore
-  liftIO $ H.lookup (unObjectStore store) filehash >>= \case
+  ObjectStore {unObjectStore = theStore} <- getStore
+  liftIO $ (H.lookup theStore filehash) >>= \case
     Nothing       -> error "ERROR: Could not find hash"
     Just contents -> return contents
 

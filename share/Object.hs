@@ -4,19 +4,25 @@ Module: Object
 Encapluates all details of the content hashing. Should be possible to change hash function 
 by only changing this file.
 -}
-module Object(ObjectHash, renderObjectHash, renderObjectHash, hashBytes) where
+module Object
+  ( ObjectHash
+  , renderObjectHash
+  , renderObjectHashBS
+  , hashBytes
+  )
+where
 
-import Logger
+import           Logger
 import           Data.Hashable
 import           Crypto.Hash                    ( Digest
                                                 , SHA256(..)
                                                 , hashWith
                                                 )
-import qualified Data.ByteString as BS
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.ByteArray as ByteArray
-import qualified Data.ByteArray.Encoding as ByteArray
+import qualified Data.ByteString               as BS
+import qualified Data.Text                     as T
+import qualified Data.Text.Encoding            as T
+import qualified Data.ByteArray                as ByteArray
+import qualified Data.ByteArray.Encoding       as ByteArray
 
 newtype ObjectHash = ObjectHash { unFileHash :: (Digest SHA256) }
   deriving (Show, Eq)
@@ -28,7 +34,8 @@ instance Loggable ObjectHash where
   toText = renderObjectHash
 
 renderObjectHash :: ObjectHash -> T.Text
-renderObjectHash = T.decodeUtf8 . ByteArray.convertToBase ByteArray.Base64 . unFileHash
+renderObjectHash =
+  T.decodeUtf8 . ByteArray.convertToBase ByteArray.Base64 . unFileHash
 
 renderObjectHashBS :: ObjectHash -> BS.ByteString
 renderObjectHashBS = ByteArray.convertToBase ByteArray.Base64 . unFileHash
