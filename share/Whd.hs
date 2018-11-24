@@ -21,7 +21,6 @@ import           Control.Monad
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
 import qualified Data.Text.IO                  as T
-import           Control.Concurrent
 import           System.INotify
 import           Control.Monad.Trans.Reader
 import           Control.Monad.IO.Unlift
@@ -34,28 +33,28 @@ import qualified Pipes.ByteString              as P
 import qualified Pipes.Parse                   as P
 import qualified Data.Binary.Get               as Bin
 import           Control.Concurrent.STM
-import Object
-import Tree
-import ObjectStore
-import Logger
-import Utils
-import Filesystem
-import qualified System.Posix.ByteString as Posix
+import           Object
+import qualified Tree
+import           ObjectStore
+import           Logger
+import           Utils
+import           Filesystem
+import qualified System.Posix.ByteString       as Posix
 
 
 
 data Context = Context {
   cntxINotify :: INotify,
   cntxObjectStore :: ObjectStore,
-  cntxRootTree :: Tree,
+  cntxRootTree :: Tree.Tree,
   cntxStateRoot :: RawFilePath,
   cntxINotifyQueue :: Maybe (TQueue Event)
 }
 
 
-type App = ReaderT Context IO
+type App = ReaderT Context (RainbowLoggerT IO)
 
-getRootTree :: App Tree
+getRootTree :: App Tree.Tree
 getRootTree = fmap cntxRootTree ask
 
 getStateRoot :: App RawFilePath
@@ -69,10 +68,6 @@ getCheckoutDir = do
 instance Monad m => HasStore (ReaderT Context m) where
   getStore = asks cntxObjectStore
 
-instance MonadIO m => HasLogger m where
-    trace = liftIO . T.putStrLn
-    info = liftIO . T.putStrLn
-
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
 }
@@ -85,7 +80,7 @@ broadcastEvent event = ask >>= \case
 
 type UserRequest = ReaderT UserReqContext App
 
-handleEvent :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> Event -> App ()
+handleEvent :: T.Text -> [RawFilePath] -> Tree.Tree -> RawFilePath -> Event -> App ()
 handleEvent checkoutName projectPath workingTree dirPath event =
   try handler >>= \case
     Left  e -> liftIO $ print (e :: SomeException)
@@ -98,7 +93,7 @@ handleEvent checkoutName projectPath workingTree dirPath event =
         let filepath = dirPath </> filename
         if isDirectory
           then do
-            newWorkingTree <- newTree 
+            newWorkingTree <- Tree.new
             storeDir workingTree newWorkingTree filepath
             startDirSync checkoutName newWorkingTree filepath []
           else do
@@ -118,13 +113,13 @@ handleEvent checkoutName projectPath workingTree dirPath event =
 
       Deleted { filePath } -> do
         info $ "REMOVE: " <> T.decodeUtf8 filePath
-        removeFromTree workingTree filePath
+        Tree.remove workingTree filePath
         broadcastEvent event
 
       _ -> return ()
 
 watchDirectory
-  :: T.Text -> [RawFilePath] -> Tree -> RawFilePath -> App WatchDescriptor
+  :: T.Text -> [RawFilePath] -> Tree.Tree -> RawFilePath -> App WatchDescriptor
 watchDirectory checkoutName projectPath workingTree filePath = do
   info $ "WATCH " <> T.decodeUtf8 filePath
   Context { cntxINotify } <- ask
@@ -137,37 +132,20 @@ watchDirectory checkoutName projectPath workingTree filePath = do
     )
   where watchTypes = [Modify, Attrib, Move, MoveOut, Delete, Create]
 
-dumpToDirectory :: Tree -> RawFilePath -> App ()
-dumpToDirectory tree filepath = forTree tree $ \(filename, treeContent) ->
+dumpToDirectory :: Tree.Tree -> RawFilePath -> App ()
+dumpToDirectory tree filepath = Tree.forM_ tree $ \(filename, treeContent) ->
   case treeContent of
-    ContentTree subtree -> do
+    Tree.ContentTree subtree -> do
       let subpath = filepath </> filename
       liftIO $ createDirectory subpath
       dumpToDirectory subtree subpath
-    ContentFile fileHash -> do
+    Tree.ContentFile fileHash -> do
       contents <- retrive fileHash
       info $ "OUT: " <> T.decodeUtf8 filename
       liftIO $ RFP.withFile (filepath </> filename) WriteMode $ \hd ->
         BS.hPut hd contents
 
 
-writeOutTree :: RawFilePath -> Tree -> App ()
-writeOutTree dirPath tree = withRunInIO $ \runInIO -> do
-  info $ "whiteOutTree: dirPath=" <> T.decodeUtf8 dirPath
-  forTree tree $ \(filename, contents) -> runInIO $ do
-    let fullFilePath = dirPath </> filename
-    case contents of
-      ContentFile fileHash -> do
-        fileContents <- retrive fileHash
-        info
-          $  "OUTPUT: "
-          <> T.decodeUtf8 fullFilePath
-          <> " "
-          <> renderObjectHash fileHash
-        liftIO $ RFP.writeFile fullFilePath fileContents
-      ContentTree subTree -> do
-        liftIO $ createDirectoryIfMissing True fullFilePath
-        writeOutTree fullFilePath subTree
 
 onNewFile :: T.Text -> [RawFilePath] -> RawFilePath -> ObjectHash -> App ()
 onNewFile checkoutName projectPath filename fileHash = do
@@ -187,25 +165,12 @@ onNewFile checkoutName projectPath filename fileHash = do
       liftIO $ RFP.writeFile filepath file
 
 
-testOutputLoop :: RawFilePath -> App ()
-testOutputLoop filepath = catch inner $ \e -> liftIO $ do
-  putStrLn "ERROR:"
-  print (e :: SomeException)
- where
-  inner = do
-    liftIO $ threadDelay $ 1000 * 1000 * 10
-    Context { cntxRootTree } <- ask
-    liftIO $ createDirectoryIfMissing True filepath
-    info $ "The tree: " <> showT cntxRootTree
-    writeOutTree filepath cntxRootTree
-    testOutputLoop filepath
-
-startDirSync :: T.Text -> Tree -> RawFilePath -> [RawFilePath] -> App ()
+startDirSync :: T.Text -> Tree.Tree -> RawFilePath -> [RawFilePath] -> App ()
 startDirSync checkoutName workingTree thisDir projectPath = do
   info $ "SCAN: " <> T.decodeUtf8 thisDir
 
-  diskFiles  <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
-  _          <- watchDirectory checkoutName projectPath workingTree thisDir
+  diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
+  _         <- watchDirectory checkoutName projectPath workingTree thisDir
 
   forM_ (map BS.pack diskFiles) $ \filename -> do
     let filepath = thisDir </> filename
@@ -215,14 +180,14 @@ startDirSync checkoutName workingTree thisDir projectPath = do
         fileHash <- storeFile workingTree filepath
         onNewFile checkoutName projectPath filename fileHash
       else do
-        newTree <- newTree 
-        liftIO $ addDirToTree workingTree filename newTree
+        newTree <- Tree.new
+        liftIO $ Tree.addSubTree workingTree filename newTree
         startDirSync checkoutName newTree filepath $ filename : projectPath
 
-  forTree workingTree $ \(filename, contents) -> do
+  Tree.forM_ workingTree $ \(filename, contents) -> do
     let filepath = thisDir </> filename
     case contents of
-      ContentFile filehash -> do
+      Tree.ContentFile filehash -> do
         fileBytes <- retrive filehash
         liftIO $ RFP.writeFile filepath fileBytes
       _ -> return ()
@@ -256,8 +221,9 @@ checkoutProject checkoutName checkoutTo = do
   liftIO $ whenM (doesFileExist linkFilepath) $ error
     "project already checked out under that name"
   liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
-  liftIO $ unlessM (doesFileExist checkoutTo) $
-    Posix.createDirectory checkoutTo Posix.ownerModes
+  liftIO $ unlessM (doesFileExist checkoutTo) $ Posix.createDirectory
+    checkoutTo
+    Posix.ownerModes
   startProjectSync checkoutName linkFilepath
 
 
@@ -266,19 +232,17 @@ sendToUser message = do
   UserReqContext { ucntxHandle } <- ask
   liftIO $ BS.hPutStr ucntxHandle message
 
-printTree :: Int -> Tree -> UserRequest ()
-printTree indent tree =
-  withRunInIO
-    $ \runInIO -> forTree tree $ \(filename, contents) ->
-        runInIO $ do
-          replicateM_ indent $ sendToUser " "
-          sendToUser $ filename <> " -> "
-          case contents of
-            ContentFile objectHash ->
-              sendToUser $ renderObjectHashBS objectHash <> "\n"
-            ContentTree innerTree -> do
-              sendToUser "\n"
-              printTree (indent + 2) innerTree
+printTree :: Int -> Tree.Tree -> UserRequest ()
+printTree indent tree = withRunInIO $ \runInIO ->
+  Tree.forM_ tree $ \(filename, contents) -> runInIO $ do
+    replicateM_ indent $ sendToUser " "
+    sendToUser $ filename <> " -> "
+    case contents of
+      Tree.ContentFile objectHash ->
+        sendToUser $ renderObjectHashBS objectHash <> "\n"
+      Tree.ContentTree innerTree -> do
+        sendToUser "\n"
+        printTree (indent + 2) innerTree
 
 processMessage :: ClientMsg -> UserRequest ()
 processMessage ClientMsg { cmsgCmd, cmsgCwd = Base64JSON cwd } =
@@ -290,12 +254,13 @@ processMessage ClientMsg { cmsgCmd, cmsgCwd = Base64JSON cwd } =
       Context { cntxRootTree } <- lift ask
       lift $ dumpToDirectory cntxRootTree cwd
     CheckoutCmd checkout -> processCheckoutMessage cwd checkout
-      
+
 
 processCheckoutMessage :: RawFilePath -> Checkout -> UserRequest ()
-processCheckoutMessage cwd (Checkout checkoutName (Base64JSON checkoutDir)) = do
-  let absCheckoutDir = cwd </> checkoutDir
-  lift $ checkoutProject checkoutName absCheckoutDir 
+processCheckoutMessage cwd (Checkout checkoutName (Base64JSON checkoutDir)) =
+  do
+    let absCheckoutDir = cwd </> checkoutDir
+    lift $ checkoutProject checkoutName absCheckoutDir
 
 clientDecoder :: P.Parser BS.ByteString UserRequest ()
 clientDecoder = P.decodeGet Bin.getWord16be >>= \case
@@ -322,7 +287,7 @@ clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
   hd <- liftIO $ socketToHandle sock ReadWriteMode
   let fromClient = P.fromHandle hd
-  flip runReaderT (UserReqContext {ucntxHandle = hd}) $ do
+  flip runReaderT (UserReqContext { ucntxHandle = hd }) $ do
     -- P.runEffect $ P.for fromClient (\) >-> toClient
     sendToUser "Hello, you have connected to the socket\n"
     _ <- P.runStateT clientDecoder fromClient
@@ -357,18 +322,17 @@ runApp = do
 main :: IO ()
 main = do
   objectStore <- newInMemoryStore
-  rootTree    <- newTree 
+  rootTree    <- Tree.new
   getHomeDirectory >>= \case
     Nothing      -> error "could not get $HOME"
-    Just homeDir -> withINotify $ \inotify -> runReaderT
-      runApp
-      (Context
-        { cntxINotify      = inotify
-        , cntxObjectStore  = objectStore
-        , cntxRootTree     = rootTree
-        , cntxStateRoot    = homeDir <> "/var/wh"
-        , cntxINotifyQueue = Nothing
-        }
-      )
+    Just homeDir -> withINotify $ \inotify -> do   
+      let context = Context
+            { cntxINotify      = inotify
+            , cntxObjectStore  = objectStore
+            , cntxRootTree     = rootTree
+            , cntxStateRoot    = homeDir <> "/var/wh"
+            , cntxINotifyQueue = Nothing
+            }
+      runLoggerT $ runReaderT runApp context
 
 

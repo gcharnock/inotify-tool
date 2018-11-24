@@ -1,9 +1,14 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RoleAnnotations #-}
 module Logger where
 
 import Control.Monad.Trans.Reader
+import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
+import Control.Monad.IO.Unlift
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString as BS
@@ -32,18 +37,14 @@ newtype LoggerT m a = LoggerT ()
 newtype RainbowLogger = StdoutLogger ()
 
 newtype RainbowLoggerT m a = RainbowLoggerT (ReaderT RainbowLogger m a)
-  deriving (Functor)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
 
-instance Applicative m => Applicative (RainbowLoggerT m) where
-    (<*>) = undefined
-    pure = undefined
-
-instance Monad m => Monad (RainbowLoggerT m) where
-    return = undefined
-    (>>=) = undefined
-
-instance MonadIO m => MonadIO (RainbowLoggerT m) where
-    liftIO = undefined
+instance forall m. MonadUnliftIO m => MonadUnliftIO (RainbowLoggerT m) where
+    askUnliftIO = do
+        UnliftIO { unliftIO } <- RainbowLoggerT askUnliftIO
+        return $ UnliftIO $ \(RainbowLoggerT a) -> unliftIO a
+    withRunInIO f = RainbowLoggerT $ withRunInIO $ \g -> f $ \(RainbowLoggerT readerT) -> g readerT
+        
 
 instance MonadIO m => HasLogger (RainbowLoggerT m) where
     trace msg = liftIO $ Rainbow.putChunkLn $ Rainbow.chunk msg &
