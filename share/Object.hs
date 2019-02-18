@@ -12,7 +12,6 @@ module Object
   )
 where
 
-import           Logger
 import           Data.Hashable
 import           Crypto.Hash                    ( Digest
                                                 , SHA256(..)
@@ -29,9 +28,6 @@ newtype ObjectHash = ObjectHash { unFileHash :: (Digest SHA256) }
 
 instance Hashable ObjectHash where
   hashWithSalt salt (ObjectHash a) = hashWithSalt salt $ (ByteArray.convert a :: BS.ByteString)
-
-instance Loggable ObjectHash where
-  toText = renderObjectHash
 
 renderObjectHash :: ObjectHash -> T.Text
 renderObjectHash =

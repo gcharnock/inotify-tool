@@ -36,7 +36,8 @@ import           Control.Concurrent.STM
 import           Object
 import qualified Tree
 import           ObjectStore
-import           Logger
+import           Logging.Contextual 
+import           Logging.Contextual.BasicScheme 
 import           Utils
 import           Filesystem
 import qualified System.Posix.ByteString       as Posix
@@ -51,8 +52,7 @@ data Context = Context {
   cntxINotifyQueue :: Maybe (TQueue Event)
 }
 
-
-type App = ReaderT Context (RainbowLoggerT IO)
+type App = ReaderT Context IO
 
 getRootTree :: App Tree.Tree
 getRootTree = fmap cntxRootTree ask
@@ -65,8 +65,8 @@ getCheckoutDir = do
   stateRoot <- getStateRoot
   return $ stateRoot </> "checkouts"
 
-instance Monad m => HasStore (ReaderT Context m) where
-  getStore = asks cntxObjectStore
+instance HasStore Context where
+  getStore = cntxObjectStore
 
 data UserReqContext = UserReqContext {
   ucntxHandle :: Handle
@@ -105,14 +105,14 @@ handleEvent checkoutName projectPath workingTree dirPath event =
       Modified { maybeFilePath } -> do
         case maybeFilePath of
           Nothing ->
-            info $ "UNHANDLED: " <> showT maybeFilePath <> "was nothing"
+            [logInfo|UNHANDLED: {maybeFilePath} was nothing|]
           Just filename -> do
             _ <- storeFile workingTree (dirPath </> filename)
             return ()
         broadcastEvent event
 
       Deleted { filePath } -> do
-        info $ "REMOVE: " <> T.decodeUtf8 filePath
+        [logInfo|REMOVE {filePath}|]
         Tree.remove workingTree filePath
         broadcastEvent event
 
@@ -121,7 +121,7 @@ handleEvent checkoutName projectPath workingTree dirPath event =
 watchDirectory
   :: T.Text -> [RawFilePath] -> Tree.Tree -> RawFilePath -> App WatchDescriptor
 watchDirectory checkoutName projectPath workingTree filePath = do
-  info $ "WATCH " <> T.decodeUtf8 filePath
+  [logInfo|WATCH {filePath}|]
   Context { cntxINotify } <- ask
   withRunInIO $ \runInIO -> addWatch
     cntxINotify
@@ -141,7 +141,7 @@ dumpToDirectory tree filepath = Tree.forM_ tree $ \(filename, treeContent) ->
       dumpToDirectory subtree subpath
     Tree.ContentFile fileHash -> do
       contents <- retrive fileHash
-      info $ "OUT: " <> T.decodeUtf8 filename
+      [logInfo|OUT: {filename}|]
       liftIO $ RFP.withFile (filepath </> filename) WriteMode $ \hd ->
         BS.hPut hd contents
 
@@ -157,17 +157,13 @@ onNewFile checkoutName projectPath filename fileHash = do
       let dirname = checkoutDir </> checkout </> foldl (</>) "" projectPath
       file <- retrive fileHash
       let filepath = dirname </> filename
-      info
-        $  "REPLICATE: "
-        <> T.decodeUtf8 filepath
-        <> " "
-        <> renderObjectHash fileHash
+      [logInfo|REPLICATE: {filepath} {renderObjectHash fileHash}|]
       liftIO $ RFP.writeFile filepath file
 
 
 startDirSync :: T.Text -> Tree.Tree -> RawFilePath -> [RawFilePath] -> App ()
 startDirSync checkoutName workingTree thisDir projectPath = do
-  info $ "SCAN: " <> T.decodeUtf8 thisDir
+  [logInfo|SCAN: {thisDir}|]
 
   diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
   _         <- watchDirectory checkoutName projectPath workingTree thisDir
@@ -209,15 +205,9 @@ runAppStartup = do
 checkoutProject :: T.Text -> RawFilePath -> App ()
 checkoutProject checkoutName checkoutTo = do
   checkoutDir <- getCheckoutDir
-  info $ "checkoutDir = " <> T.decodeUtf8 checkoutDir
+  [logInfo|checkoutDir = {checkoutDir}|]
   let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName
-  info
-    $  "CHECKOUT:"
-    <> checkoutName
-    <> ": "
-    <> T.decodeUtf8 linkFilepath
-    <> " -> "
-    <> T.decodeUtf8 checkoutTo
+  [logInfo|CHECKOUT: checkoutName: {linkFilepath} -> {checkoutTo}|]
   liftIO $ whenM (doesFileExist linkFilepath) $ error
     "project already checked out under that name"
   liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
@@ -321,6 +311,8 @@ runApp = do
 
 main :: IO ()
 main = do
+  withLogger
+  flip runReaderT 
   objectStore <- newInMemoryStore
   rootTree    <- Tree.new
   getHomeDirectory >>= \case
@@ -333,6 +325,6 @@ main = do
             , cntxStateRoot    = homeDir <> "/var/wh"
             , cntxINotifyQueue = Nothing
             }
-      runLoggerT $ runReaderT runApp context
+      runReaderT runApp context
 
 

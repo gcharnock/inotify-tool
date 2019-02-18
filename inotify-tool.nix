@@ -1,30 +1,57 @@
-{ mkDerivation, aeson, base, binary, bytestring, cryptonite
-, directory, filepath, hashable, hashtables, hinotify, hspec
-, interpolate, memory, monad-logger, mtl, network
-, optparse-applicative, pipes, pipes-binary, pipes-bytestring
-, pipes-parse, rainbow, rawfilepath, stdenv, stm, text
-, transformers, unix, unliftio, unliftio-core, utf8-string
-}:
-mkDerivation {
-  pname = "inotify-tool";
-  version = "0.1.0.0";
-  src = ./.;
-  isLibrary = true;
-  isExecutable = true;
-  libraryHaskellDepends = [
-    aeson base binary bytestring cryptonite directory filepath hashable
-    hashtables hinotify interpolate memory monad-logger mtl network
-    pipes pipes-binary pipes-bytestring pipes-parse rainbow rawfilepath
-    stm text transformers unix unliftio unliftio-core utf8-string
-  ];
-  executableHaskellDepends = [
-    aeson base binary bytestring network optparse-applicative text unix
-    unliftio unliftio-core
-  ];
-  testHaskellDepends = [
-    base bytestring hashable hashtables hinotify hspec mtl rawfilepath
-    stm text transformers unix unliftio unliftio-core
-  ];
-  license = stdenv.lib.licenses.unfree;
-  hydraPlatforms = stdenv.lib.platforms.none;
+# { hspkgs ? (import <nixpkgs> { }).haskellPackages }:
+let
+  doJailbreak = pkgs.haskell.lib.doJailbreak;
+  dontCheck = pkgs.haskell.lib.dontCheck;
+  config = {
+    allowUnfree = true;
+    packageOverrides = pkgs: rec {
+      haskell = pkgs.haskell // {
+        packages = pkgs.haskell.packages // {
+          ghc844 = pkgs.haskell.packages.ghc844.override {
+            overrides = self: super: {
+              contextual-logger = self.callPackage ../contextual-logger/haskell/contextual-logger.nix {};
+              inotify-tool = dontCheck (self.callPackage ./. {});
+            };
+          };
+        };
+      };
+    };
+  };
+  pkgs = import <nixpkgs> { inherit config; };
+  hsPkgs = pkgs.haskell.packages.ghc844;
+in
+{ 
+  inherit pkgs;
+  build = hsPkgs.inotify-tool;
+  env = hsPkgs.inotify-tool.env;
+  hoogle = hsPkgs.ghcWithHoogle (hspkgs: [
+    hspkgs.aeson
+    hspkgs.base
+    hspkgs.binary
+    hspkgs.bytestring
+    hspkgs.cryptonite
+    hspkgs.directory
+    hspkgs.filepath
+    hspkgs.hashable
+    hspkgs.hashtables
+    hspkgs.hinotify
+    hspkgs.interpolate
+    hspkgs.memory
+    hspkgs.mtl
+    hspkgs.network
+    hspkgs.pipes
+    hspkgs.pipes-binary
+    hspkgs.pipes-bytestring
+    hspkgs.pipes-parse
+    hspkgs.rainbow
+    hspkgs.rawfilepath
+    hspkgs.stm
+    hspkgs.text
+    hspkgs.transformers
+    hspkgs.unix
+    hspkgs.unliftio
+    hspkgs.unliftio-core
+    hspkgs.utf8-string
+    hspkgs.contextual-logger
+  ]);
 }
