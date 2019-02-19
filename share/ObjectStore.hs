@@ -16,7 +16,6 @@ import qualified Data.ByteString.RawFilePath   as RFP
                                          hiding ( putStrLn )
 import qualified Data.ByteString.Char8         as BS
 import           RawFilePath.Directory
-import qualified Data.Text.Encoding            as T
 import qualified Data.HashTable.IO             as H
 import           Control.Monad.IO.Unlift
 import           LibWormhole

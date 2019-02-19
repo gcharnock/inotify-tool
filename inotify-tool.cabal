@@ -24,6 +24,7 @@ library
                        LibWormhole,
                        Tree,
                        Utils,
+                       UnliftIO.INotify
                        Whd
   hs-source-dirs:      share
   ghc-options:         -Wall

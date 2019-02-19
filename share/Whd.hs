@@ -3,7 +3,6 @@
 module Whd where
 
 import           Control.Monad.Trans            ( lift )
-import qualified System.Directory              as Sys
 import           System.IO
 import           UnliftIO.Exception
 import           UnliftIO.Async
@@ -21,7 +20,8 @@ import           Control.Monad
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
 import qualified Data.Text.IO                  as T
-import           System.INotify
+import           UnliftIO.INotify
+import           System.INotify hiding (withINotify)
 import           Control.Monad.Trans.Reader
 import           Control.Monad.IO.Unlift
 import           Network.Socket
@@ -165,7 +165,7 @@ startDirSync :: T.Text -> Tree.Tree -> RawFilePath -> [RawFilePath] -> App ()
 startDirSync checkoutName workingTree thisDir projectPath = do
   [logInfo|SCAN: {thisDir}|]
 
-  diskFiles <- liftIO $ Sys.listDirectory $ BS.unpack thisDir
+  diskFiles <- listDirectory $ BS.unpack thisDir
   _         <- watchDirectory checkoutName projectPath workingTree thisDir
 
   forM_ (map BS.pack diskFiles) $ \filename -> do
@@ -311,20 +311,20 @@ runApp = do
 
 main :: IO ()
 main = do
-  withLogger
-  flip runReaderT 
-  objectStore <- newInMemoryStore
-  rootTree    <- Tree.new
-  getHomeDirectory >>= \case
-    Nothing      -> error "could not get $HOME"
-    Just homeDir -> withINotify $ \inotify -> do   
-      let context = Context
-            { cntxINotify      = inotify
-            , cntxObjectStore  = objectStore
-            , cntxRootTree     = rootTree
-            , cntxStateRoot    = homeDir <> "/var/wh"
-            , cntxINotifyQueue = Nothing
-            }
-      runReaderT runApp context
+  withLogger loggerSettings (LogEvent "whd-app" Nothing) $ \logger ->
+    flip runReaderT logger $ do
+      objectStore <- newInMemoryStore
+      rootTree    <- Tree.new
+      (liftIO getHomeDirectory) >>= \case
+        Nothing      -> (error "could not get $HOME":: ReaderT Logger IO a)
+        Just homeDir -> withINotify $ \inotify -> do   
+          let context = Context
+                { cntxINotify      = inotify
+                , cntxObjectStore  = objectStore
+                , cntxRootTree     = rootTree
+                , cntxStateRoot    = homeDir <> "/var/wh"
+                , cntxINotifyQueue = Nothing
+                }
+          runReaderT runApp context
 
 
