@@ -19,7 +19,6 @@ import qualified Data.ByteString.Char8         as BS
 import           Control.Monad
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as T
-import qualified Data.Text.IO                  as T
 import           UnliftIO.INotify
 import           System.INotify hiding (withINotify)
 import           Control.Monad.Trans.Reader
@@ -319,7 +318,12 @@ runApp = do
 main :: IO ()
 main = do
   let loggerSettings = LoggerSettings {
-
+    lsHostname = "127.0.0.1",
+    lsPort = 5432,
+    lsUsername = "postgres",
+    lsPassword = "",
+    lsWriterCount = 1,
+    lsDbName = "log"
   }
   withLogger loggerSettings (LogEvent "whd-app" Nothing) $ \logger ->
     flip runReaderT logger $ do
