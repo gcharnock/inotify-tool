@@ -9,7 +9,7 @@ let
         packages = pkgs.haskell.packages // {
           ghc844 = pkgs.haskell.packages.ghc844.override {
             overrides = self: super: {
-              contextual-logger = self.callPackage ../contextual-logger/haskell/contextual-logger.nix {};
+              contextual-logger = self.callPackage ../contextual-logger/haskell {};
               inotify-tool = dontCheck (self.callPackage ./. {});
             };
           };

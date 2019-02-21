@@ -3,7 +3,7 @@
 module Whd where
 
 import           Control.Monad.Trans            ( lift )
-import           System.IO
+import qualified System.IO                     as Sys
 import           UnliftIO.Exception
 import           UnliftIO.Async
 import           Control.Monad.IO.Class
@@ -39,7 +39,9 @@ import           ObjectStore
 import           Logging.Contextual 
 import           Logging.Contextual.BasicScheme 
 import           Utils
-import           Filesystem
+import           RawFilePath.Directory         (RawFilePath)
+import qualified RawFilePath.Directory         as RFP
+import           Filesystem                    
 import qualified System.Posix.ByteString       as Posix
 
 
@@ -49,10 +51,15 @@ data Context = Context {
   cntxObjectStore :: ObjectStore,
   cntxRootTree :: Tree.Tree,
   cntxStateRoot :: RawFilePath,
-  cntxINotifyQueue :: Maybe (TQueue Event)
+  cntxINotifyQueue :: Maybe (TQueue Event),
+  cntxLogger :: Logger
 }
 
 type App = ReaderT Context IO
+
+instance HasLog Context where
+  setLog logger context = context { cntxLogger = logger }
+  getLog = cntxLogger
 
 getRootTree :: App Tree.Tree
 getRootTree = fmap cntxRootTree ask
@@ -69,7 +76,7 @@ instance HasStore Context where
   getStore = cntxObjectStore
 
 data UserReqContext = UserReqContext {
-  ucntxHandle :: Handle
+  ucntxHandle :: Sys.Handle
 }
 
 broadcastEvent :: Event -> App ()
@@ -137,12 +144,12 @@ dumpToDirectory tree filepath = Tree.forM_ tree $ \(filename, treeContent) ->
   case treeContent of
     Tree.ContentTree subtree -> do
       let subpath = filepath </> filename
-      liftIO $ createDirectory subpath
+      liftIO $ RFP.createDirectory subpath
       dumpToDirectory subtree subpath
     Tree.ContentFile fileHash -> do
       contents <- retrive fileHash
       [logInfo|OUT: {filename}|]
-      liftIO $ RFP.withFile (filepath </> filename) WriteMode $ \hd ->
+      liftIO $ RFP.withFile (filepath </> filename) Sys.WriteMode $ \hd ->
         BS.hPut hd contents
 
 
@@ -150,7 +157,7 @@ dumpToDirectory tree filepath = Tree.forM_ tree $ \(filename, treeContent) ->
 onNewFile :: T.Text -> [RawFilePath] -> RawFilePath -> ObjectHash -> App ()
 onNewFile checkoutName projectPath filename fileHash = do
   checkoutDir <- getCheckoutDir
-  checkouts   <- liftIO $ listDirectory checkoutDir
+  checkouts   <- liftIO $ RFP.listDirectory checkoutDir
   forM_ checkouts $ \checkout -> if T.decodeUtf8 checkout == checkoutName
     then return ()
     else do
@@ -165,12 +172,12 @@ startDirSync :: T.Text -> Tree.Tree -> RawFilePath -> [RawFilePath] -> App ()
 startDirSync checkoutName workingTree thisDir projectPath = do
   [logInfo|SCAN: {thisDir}|]
 
-  diskFiles <- listDirectory $ BS.unpack thisDir
+  diskFiles <- liftIO $ RFP.listDirectory thisDir
   _         <- watchDirectory checkoutName projectPath workingTree thisDir
 
-  forM_ (map BS.pack diskFiles) $ \filename -> do
+  forM_ diskFiles $ \filename -> do
     let filepath = thisDir </> filename
-    isDirectory <- liftIO $ doesDirectoryExist filepath
+    isDirectory <- liftIO $ RFP.doesDirectoryExist filepath
     if not isDirectory
       then do
         fileHash <- storeFile workingTree filepath
@@ -197,7 +204,7 @@ startProjectSync checkoutName thisDir = do
 runAppStartup :: App ()
 runAppStartup = do
   checkoutDir <- getCheckoutDir
-  checkouts   <- liftIO $ listDirectory checkoutDir
+  checkouts   <- liftIO $ RFP.listDirectory checkoutDir
   forM_ checkouts $ \filename -> do
     let checkoutName = T.decodeUtf8 filename
     startProjectSync checkoutName $ checkoutDir </> filename
@@ -208,10 +215,10 @@ checkoutProject checkoutName checkoutTo = do
   [logInfo|checkoutDir = {checkoutDir}|]
   let linkFilepath = checkoutDir </> T.encodeUtf8 checkoutName
   [logInfo|CHECKOUT: checkoutName: {linkFilepath} -> {checkoutTo}|]
-  liftIO $ whenM (doesFileExist linkFilepath) $ error
+  liftIO $ whenM (RFP.doesFileExist linkFilepath) $ error
     "project already checked out under that name"
   liftIO $ Posix.createSymbolicLink checkoutTo linkFilepath
-  liftIO $ unlessM (doesFileExist checkoutTo) $ Posix.createDirectory
+  liftIO $ unlessM (RFP.doesFileExist checkoutTo) $ Posix.createDirectory
     checkoutTo
     Posix.ownerModes
   startProjectSync checkoutName linkFilepath
@@ -275,7 +282,7 @@ clientDecoder = P.decodeGet Bin.getWord16be >>= \case
 clientSocketThread :: Socket -> App ()
 clientSocketThread sock = do
   liftIO $ putStrLn "in read thread"
-  hd <- liftIO $ socketToHandle sock ReadWriteMode
+  hd <- liftIO $ socketToHandle sock Sys.ReadWriteMode
   let fromClient = P.fromHandle hd
   flip runReaderT (UserReqContext { ucntxHandle = hd }) $ do
     -- P.runEffect $ P.for fromClient (\) >-> toClient
@@ -302,7 +309,7 @@ ensureStateDirIsSetup = do
 
 runApp :: App ()
 runApp = do
-  liftIO $ tryRemoveFile "/tmp/mysock"
+  liftIO $ RFP.tryRemoveFile "/tmp/mysock"
   ensureStateDirIsSetup
   runAppStartup
   bracket (liftIO $ socket AF_UNIX Stream defaultProtocol)
@@ -311,11 +318,14 @@ runApp = do
 
 main :: IO ()
 main = do
+  let loggerSettings = LoggerSettings {
+
+  }
   withLogger loggerSettings (LogEvent "whd-app" Nothing) $ \logger ->
     flip runReaderT logger $ do
       objectStore <- newInMemoryStore
       rootTree    <- Tree.new
-      (liftIO getHomeDirectory) >>= \case
+      (liftIO RFP.getHomeDirectory) >>= \case
         Nothing      -> (error "could not get $HOME":: ReaderT Logger IO a)
         Just homeDir -> withINotify $ \inotify -> do   
           let context = Context
@@ -324,7 +334,8 @@ main = do
                 , cntxRootTree     = rootTree
                 , cntxStateRoot    = homeDir <> "/var/wh"
                 , cntxINotifyQueue = Nothing
+                , cntxLogger       = logger 
                 }
-          runReaderT runApp context
+          liftIO $ runReaderT runApp context
 
 

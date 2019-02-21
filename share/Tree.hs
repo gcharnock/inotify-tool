@@ -16,7 +16,7 @@ where
 import           Control.Monad.IO.Unlift
 import qualified Data.HashTable.IO             as H
 import           Object
-import           Filesystem
+import           RawFilePath.Directory as RFP (RawFilePath)
 
 type HashTable k v = H.BasicHashTable k v
 
