@@ -6,7 +6,6 @@ module UnliftIO.INotify (
 
 import qualified System.INotify as A
 import UnliftIO
-import Control.Monad.IO.Class
 
 initINotify :: MonadIO m => m A.INotify
 initINotify = liftIO A.initINotify

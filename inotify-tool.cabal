@@ -19,12 +19,14 @@ library
   exposed-modules:     Object,
                        ObjectStore,
                        ObjectStore.Memory,
+                       Context,
                        Filesystem,
                        FileWatcher,
                        LibWormhole,
                        Tree,
                        Utils,
                        UnliftIO.INotify
+                       UserRequest,
                        Whd
   hs-source-dirs:      share
   ghc-options:         -Wall
@@ -33,7 +35,11 @@ library
                        QuasiQuotes,
                        LambdaCase,
                        NamedFieldPuns,
+                       ConstraintKinds,
                        DeriveGeneric,
+                       FlexibleContexts,
+                       FlexibleInstances,
+                       MultiParamTypeClasses,
                        GeneralizedNewtypeDeriving
   build-depends:       base >=4.10 && <4.12,
                        hinotify,
