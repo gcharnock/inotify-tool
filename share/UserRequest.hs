@@ -35,6 +35,7 @@ import Control.Monad.Reader.Class
 import Control.Monad.Reader (runReaderT)
 import FileWatcher
 import Context
+import Actions.Directory
 
 
 class HasUserRequest a where
@@ -91,18 +92,6 @@ printTree indent tree = withRunInIO $ \runInIO ->
         sendToUser "\n"
         printTree (indent + 2) innerTree
 
-dumpToDirectory :: (MonadReader env m, HasLog env, HasStore env, MonadUnliftIO m) => Tree.Tree -> RawFilePath -> m ()
-dumpToDirectory tree filepath = Tree.forM_ tree $ \(filename, treeContent) ->
-  case treeContent of
-    Tree.ContentTree subtree -> do
-      let subpath = filepath </> filename
-      liftIO $ RFP.createDirectory subpath
-      dumpToDirectory subtree subpath
-    Tree.ContentFile fileHash -> do
-      contents <- retrive fileHash
-      [logInfo|OUT: {filename}|]
-      liftIO $ RFP.withFile (filepath </> filename) Sys.WriteMode $ \hd ->
-        BS.hPut hd contents
 
 processMessage :: UserRequest env m => ClientMsg -> m ()
 processMessage ClientMsg { cmsgCmd, cmsgCwd = Base64JSON cwd } =

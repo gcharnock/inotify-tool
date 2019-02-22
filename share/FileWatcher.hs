@@ -61,7 +61,7 @@ askRootTree = fmap getRootTree ask
 askINotify :: (MonadReader env m, HasINotify env) => m INotify
 askINotify = fmap getINotify ask
 
-type FSWatcher env m = (MonadReader env m, MonadUnliftIO m, HasBroadcast env, HasLog env, HasStateRoot env, HasRootTree env, HasStore env, HasINotify env)
+type FSWatcher env m = (MonadReader env m, MonadUnliftIO m, HasBroadcast env, HasLog env, HasRootTree env, HasStateRoot env, HasStore env, HasINotify env)
 
 
 getCheckoutDir :: (MonadReader env m, HasStateRoot env) => m RawFilePath
@@ -163,13 +163,13 @@ startDirSync checkoutName workingTree thisDir projectPath = do
       _ -> return ()
 
 
-startProjectSync :: FSWatcher env m => T.Text -> RawFilePath -> m ()
+startProjectSync :: (FSWatcher env m, HasRootTree env) => T.Text -> RawFilePath -> m ()
 startProjectSync checkoutName thisDir = do
   rootTree <- askRootTree
   startDirSync checkoutName rootTree thisDir []
 
 
-checkoutProject :: FSWatcher env m => T.Text -> RawFilePath -> m ()
+checkoutProject :: (FSWatcher env m, HasRootTree env) => T.Text -> RawFilePath -> m ()
 checkoutProject checkoutName checkoutTo = do
   checkoutDir <- getCheckoutDir
   [logInfo|checkoutDir = {checkoutDir}|]
