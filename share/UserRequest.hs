@@ -10,8 +10,6 @@ import qualified Data.ByteString               as BS
                                                 , unpack
                                                 , pack
                                                 )
-import qualified Data.ByteString.RawFilePath   as RFP
-                                         hiding ( putStrLn )
 import qualified Data.ByteString.Char8         as BS
 import           Control.Monad
 import           Control.Monad.IO.Unlift
@@ -23,13 +21,12 @@ import qualified Pipes.Binary                  as P
 import qualified Pipes.ByteString              as P
 import qualified Pipes.Parse                   as P
 import qualified Data.Binary.Get               as Bin
-import           Object
-import qualified Tree
+import           Data.Object
+import qualified Data.Tree as Tree
 import           ObjectStore
 import           Logging.Contextual 
 import           Logging.Contextual.BasicScheme 
 import           RawFilePath.Directory         (RawFilePath)
-import qualified RawFilePath.Directory         as RFP
 import           Filesystem                    
 import Control.Monad.Reader.Class
 import Control.Monad.Reader (runReaderT)
@@ -147,8 +144,8 @@ acceptLoop sock = do
   liftIO $ bind sock $ SockAddrUnix "/tmp/mysock"
   liftIO $ listen sock 5
   forever $ do
-    liftIO $ putStrLn "waiting to accept"
+    [logInfo|waiting to accept|]
     (sock', _) <- liftIO $ accept sock
-    liftIO $ putStrLn $ "got connection"
+    [logInfo|got connection|]
     async $ clientSocketThread sock'
 

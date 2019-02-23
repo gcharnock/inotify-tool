@@ -4,11 +4,12 @@ Module: Object
 Encapluates all details of the content hashing. Should be possible to change hash function 
 by only changing this file.
 -}
-module Object
+module Data.Object
   ( ObjectHash
   , renderObjectHash
   , renderObjectHashBS
   , hashBytes
+  , objectHashBytes
   )
 where
 
@@ -32,6 +33,9 @@ instance Hashable ObjectHash where
 renderObjectHash :: ObjectHash -> T.Text
 renderObjectHash =
   T.decodeUtf8 . ByteArray.convertToBase ByteArray.Base64 . unFileHash
+
+objectHashBytes :: ObjectHash -> BS.ByteString
+objectHashBytes = ByteArray.convert . unFileHash
 
 renderObjectHashBS :: ObjectHash -> BS.ByteString
 renderObjectHashBS = ByteArray.convertToBase ByteArray.Base64 . unFileHash

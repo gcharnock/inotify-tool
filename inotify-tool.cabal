@@ -16,14 +16,15 @@ extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Object,
+  exposed-modules:     Actions.Directory,
+                       Data.Object,
+                       Data.Tree,
                        ObjectStore,
                        ObjectStore.Memory,
                        Context,
                        Filesystem,
                        FileWatcher,
                        LibWormhole,
-                       Tree,
                        Utils,
                        UnliftIO.INotify
                        UserRequest,

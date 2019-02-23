@@ -3,7 +3,7 @@ module Context where
 
 import           System.INotify hiding (withINotify)
 import           Control.Concurrent.STM
-import qualified Tree
+import qualified Data.Tree as Tree
 import           ObjectStore
 import           Logging.Contextual 
 import           RawFilePath.Directory         (RawFilePath)

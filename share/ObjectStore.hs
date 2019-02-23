@@ -19,8 +19,8 @@ import           RawFilePath.Directory
 import qualified Data.HashTable.IO             as H
 import           Control.Monad.IO.Unlift
 import           LibWormhole
-import qualified Tree
-import           Object
+import qualified Data.Tree as Tree
+import           Data.Object
 import Filesystem
 import Control.Monad.Reader.Class
 import Logging.Contextual
