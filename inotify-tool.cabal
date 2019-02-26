@@ -19,10 +19,11 @@ library
   exposed-modules:     Actions.Directory,
                        Data.Object,
                        Data.Tree,
+                       Effects.Filesystem
+                       Effects.Filesystem.Posix
                        ObjectStore,
                        ObjectStore.Memory,
                        Context,
-                       Filesystem,
                        FileWatcher,
                        LibWormhole,
                        Utils,
@@ -33,7 +34,7 @@ library
   ghc-options:         -Wall
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings,
-                       QuasiQuotes,
+                      -- QuasiQuotes,
                        LambdaCase,
                        NamedFieldPuns,
                        ConstraintKinds,
@@ -42,6 +43,10 @@ library
                        FlexibleInstances,
                        MultiParamTypeClasses,
                        GeneralizedNewtypeDeriving
+                       DeriveFunctor,
+                       KindSignatures,
+                       MultiParamTypeClasses,
+                       TypeOperators 
   build-depends:       base >=4.10 && <4.12,
                        hinotify,
                        directory,
@@ -69,7 +74,8 @@ library
                        unix,
                        stm,
                        rainbow,
-                       contextual-logger
+                       contextual-logger,
+                       fused-effects
 
 executable wh
   main-is:             Main.hs

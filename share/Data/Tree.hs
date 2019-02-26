@@ -70,4 +70,6 @@ treeToObject tree = do
           let objectHash = objectHashBytes o
           putWord8 0
           putByteString objectHash
-        ContentTree _ -> error "not supported yet"
+        ContentTree _ -> do
+          putWord8 1
+          error "not supported yet"
