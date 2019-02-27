@@ -1,2 +1,2 @@
 { }:
-(import ./inotify-tool.nix).env
+(import ./devel.nix).env

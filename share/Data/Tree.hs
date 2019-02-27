@@ -13,10 +13,14 @@ module Data.Tree
   )
 where
 
+import qualified Control.Monad as M
 import           Control.Monad.IO.Unlift
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.HashTable.IO             as H
-import           Object
+import           Data.Object
 import           RawFilePath.Directory as RFP (RawFilePath)
+import           Data.Binary.Put
 
 type HashTable k v = H.BasicHashTable k v
 
@@ -51,3 +55,21 @@ forM_
 forM_ tree action =
   withRunInIO $ \runInIO -> H.mapM_ (\a -> runInIO $ action a) (unTree tree)
 
+treeToObject :: MonadUnliftIO m => Tree -> m LBS.ByteString
+treeToObject tree = do
+  asList <- liftIO $ H.toList (unTree tree)
+  return $ runPut $ do
+    let l = length asList
+    putWord32be (fromIntegral l)
+    M.forM_ asList $ \(filepath, content) -> do
+      let lfLen = BS.length filepath
+      putWord16be (fromIntegral lfLen)
+      putByteString filepath
+      case content of
+        ContentFile o -> do
+          let objectHash = objectHashBytes o
+          putWord8 0
+          putByteString objectHash
+        ContentTree _ -> do
+          putWord8 1
+          error "not supported yet"

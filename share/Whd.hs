@@ -7,7 +7,7 @@ import qualified Data.Text.Encoding            as T
 import           UnliftIO.INotify
 import           Control.Monad.Trans.Reader
 import           Network.Socket
-import qualified Tree
+import qualified Data.Tree as Tree
 import           ObjectStore
 import           Logging.Contextual 
 import           Utils

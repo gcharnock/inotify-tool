@@ -10,8 +10,8 @@ import qualified Data.Text.Encoding            as T
 import           System.INotify hiding (withINotify)
 import           Control.Monad.IO.Unlift
 import           Control.Concurrent.STM
-import           Object
-import qualified Tree
+import           Data.Object
+import qualified Data.Tree as Tree
 import           ObjectStore
 import           Logging.Contextual 
 import           Logging.Contextual.BasicScheme 

@@ -16,14 +16,18 @@ extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     Object,
+  exposed-modules:     Actions.Directory,
+                       Data.Object,
+                       Data.Tree,
+                       Effects.Filesystem,
+                       Effects.Filesystem.Posix,
+                       Effects.FileWatcher,
+                       Effects.FileWatcher.INotify,
                        ObjectStore,
                        ObjectStore.Memory,
                        Context,
-                       Filesystem,
                        FileWatcher,
                        LibWormhole,
-                       Tree,
                        Utils,
                        UnliftIO.INotify
                        UserRequest,
@@ -32,7 +36,7 @@ library
   ghc-options:         -Wall
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings,
-                       QuasiQuotes,
+                      -- QuasiQuotes,
                        LambdaCase,
                        NamedFieldPuns,
                        ConstraintKinds,
@@ -41,6 +45,10 @@ library
                        FlexibleInstances,
                        MultiParamTypeClasses,
                        GeneralizedNewtypeDeriving
+                       DeriveFunctor,
+                       KindSignatures,
+                       MultiParamTypeClasses,
+                       TypeOperators 
   build-depends:       base >=4.10 && <4.12,
                        hinotify,
                        directory,
@@ -68,7 +76,8 @@ library
                        unix,
                        stm,
                        rainbow,
-                       contextual-logger
+                       contextual-logger,
+                       fused-effects
 
 executable wh
   main-is:             Main.hs

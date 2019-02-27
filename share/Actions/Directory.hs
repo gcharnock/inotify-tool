@@ -1,42 +1,21 @@
 
 module Actions.Directory where
 
-import qualified System.IO                     as Sys
-import           UnliftIO.Async
+import System.IO as Sys
+import Filesystem
+import qualified Data.Tree as Tree
+import Logging.Contextual.BasicScheme
 import           Control.Monad.IO.Class
-import qualified Data.ByteString               as BS
-                                         hiding ( hPutStrLn
-                                                , putStrLn
-                                                , unpack
-                                                , pack
-                                                )
-import qualified Data.ByteString.RawFilePath   as RFP
-                                         hiding ( putStrLn )
-import qualified Data.ByteString.Char8         as BS
-import           Control.Monad
-import           Control.Monad.IO.Unlift
-import           Network.Socket
-import           Data.Aeson
-import           LibWormhole
-import qualified Pipes                         as P
-import qualified Pipes.Binary                  as P
-import qualified Pipes.ByteString              as P
-import qualified Pipes.Parse                   as P
-import qualified Data.Binary.Get               as Bin
-import           Object
-import qualified Tree
-import           ObjectStore
 import           Logging.Contextual 
-import           Logging.Contextual.BasicScheme 
 import           RawFilePath.Directory         (RawFilePath)
 import qualified RawFilePath.Directory         as RFP
-import           Filesystem                    
 import Control.Monad.Reader.Class
-import Control.Monad.Reader (runReaderT)
-import FileWatcher
-import Context
+import qualified Data.ByteString.RawFilePath as RFP
+import qualified Data.ByteString as BS
+import ObjectStore
+import Control.Monad.IO.Unlift
 
-dumpToDirectory :: (MonadReader env m, HasLog env, HasStore env, MonadUnliftIO m) => Tree.Tree -> RawFilePath -> m ()
+dumpToDirectory :: (MonadReader env m, MonadUnliftIO m, HasStore env, HasLog env) => Tree.Tree -> RawFilePath -> m ()
 dumpToDirectory tree filepath = Tree.forM_ tree $ \(filename, treeContent) ->
   case treeContent of
     Tree.ContentTree subtree -> do
