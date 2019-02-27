@@ -20,7 +20,8 @@ import qualified RawFilePath.Directory as RFP
 newtype FsPosix m a = FsPosix { runFsPosix :: m a }
   deriving (Functor, Applicative, Monad, MonadIO)
 
-instance (MonadIO m, Carrier sig m) => Carrier (Filesystem :+: sig) (FsPosix m) where
+
+instance (MonadIO m, Carrier sig m) => Carrier (Filesystem RFP.RawFilePath :+: sig) (FsPosix m) where
   ret = pure
   eff = handleSum (FsPosix . eff . handleCoercible) $ cases 
       where cases = \case
@@ -33,4 +34,5 @@ instance (MonadIO m, Carrier sig m) => Carrier (Filesystem :+: sig) (FsPosix m) 
               DeleteFile fp k -> liftIO (RFP.tryRemoveFile fp) >> k
               GetCWD k -> liftIO Posix.getWorkingDirectory >>= k
               LiftDirectory fp k -> LiftIO RFP.listDirectory >>= k
+              AppendPath fp1 fp2 -> return $  UTF8.fromString $ (UTF8.toString fp1) FP.</> (UTF8.toString fp2)
 

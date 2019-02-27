@@ -21,23 +21,23 @@ import qualified System.INotify                as INotify
 newtype WatcherINotify hDir fp m a = WatcherINotify { runWatcherINotify :: m a }
   deriving (Functor, Applicative, Monad, MonadIO)
 
-instance (MonadIO m, Member (Reader INotify) sig, Member Filesystem sig, Carrier sig m) 
+instance (MonadIO m, Member (Reader INotify) sig, Member (Filesystem fp) sig, Carrier sig m) 
          => Carrier (FileWatcher hDir fp :+: sig) (WatcherINotify hDir fp m) where
   ret = pure
   eff = handleSum (WatcherINotify . eff . handleCoercible) $ cases 
       where cases = \case
               WatchDir hDir fp callback k -> inotifyWatchDir hDir fp callback >> k
 
-type INotifyImp sig m = (MonadIO m, Member (Reader INotify) sig, Member Filesystem sig, Carrier sig m) 
+type INotifyImp fp sig m = (MonadIO m, Member (Reader INotify) sig, Member (Filesystem fp) sig, Carrier sig m) 
 
-inotifyWatchDir :: INotifyImp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m ()
+inotifyWatchDir :: INotifyImp fp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m ()
 inotifyWatchDir hDir fp callback = do
     inotify <- ask
     undefined (inotify :: INotify) 
     return ()
 
 
-inotifyWatchDirectory :: INotifyImp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
+inotifyWatchDirectory :: INotifyImp fp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
 inotifyWatchDirectory hDir fp callback = do
   let watchTypes = [ INotify.Modify
                    , INotify.Attrib
@@ -52,7 +52,7 @@ inotifyWatchDirectory hDir fp callback = do
   diskFiles <- listDirectory fp
 
   forM_ diskFiles $ \filename -> do
-    let filepath = thisDir </> filename
+    filepath <- fp `appendPath` filename
     isDirectory <- doesDirectoryExist filepath
     if isDirectory
       then void $ inotifyWatchDirectory (error "no sub hdir yet") filepath callback

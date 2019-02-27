@@ -1,6 +1,8 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Effects.Filesystem where
 
+import Data.Proxy
 import Control.Effect
 import Control.Effect.Carrier
 import Control.Effect.Resource
@@ -8,30 +10,30 @@ import Data.Coerce
 import Data.ByteString as BS
 import System.IO (Handle, IOMode)
 
-type RawFilePath = BS.ByteString
+data Filesystem fp (m :: * -> *) k
+  = OpenFile IOMode fp (Handle -> k)
+  | CloseFile (Proxy fp) Handle k
+  | ReadFile fp (BS.ByteString -> k)
+  | WriteFile fp BS.ByteString k
+  | DeleteFile fp k
 
-data Filesystem (m :: * -> *) k
-  = OpenFile IOMode RawFilePath (Handle -> k)
-  | CloseFile Handle k
-  | ReadFile RawFilePath (BS.ByteString -> k)
-  | WriteFile RawFilePath BS.ByteString k
-  | DeleteFile RawFilePath k
+  | CreateDirectory fp k
+  | ListDirectory fp ([fp] -> k)
+  | DoesDirectoryExist fp (Bool -> k)
+  | RemoveDirectory fp k
 
-  | CreateDirectory RawFilePath k
-  | ListDirectory RawFilePath ([RawFilePath] -> k)
-  | DoesDirectoryExist RawFilePath (Bool -> k)
-  | RemoveDirectory RawFilePath k
+  | AppendPath fp fp (fp -> k)
 
-  | GetCWD (RawFilePath -> k)
+  | GetCWD (fp -> k)
   deriving (Functor)
 
-instance HFunctor Filesystem where
+instance HFunctor (Filesystem fp) where
     hmap _ = coerce
 
-instance Effect Filesystem where
+instance Effect (Filesystem fp) where
     handle state handler = \case
          OpenFile ioMode fp k -> OpenFile ioMode fp $ handler . (<$ state) . k
-         CloseFile h k -> CloseFile h $ handler $ k <$ state
+         CloseFile proxy h k -> CloseFile proxy h $ handler $ k <$ state
          ReadFile fp k -> ReadFile fp $ handler . (<$ state) . k
          WriteFile fp contents k -> WriteFile fp contents $ handler $ k <$ state
          DeleteFile fp k -> DeleteFile fp $ handler $ k <$ state
@@ -41,41 +43,47 @@ instance Effect Filesystem where
          RemoveDirectory fp k -> RemoveDirectory fp $ handler $ k <$ state
          DoesDirectoryExist fp k -> DoesDirectoryExist fp $ handler . (<$ state) . k
 
+         AppendPath fp1 fp2 k -> AppendPath fp1 fp2 $ handler . (<$ state) . k
+
          GetCWD k -> GetCWD $ handler . (<$ state) . k
 
-type FS sig m = (Member Filesystem sig, Carrier sig m)
+type FS fp sig m = (Member (Filesystem fp) sig, Carrier sig m)
 
-openFile :: FS sig m => IOMode -> RawFilePath -> m Handle
+openFile :: FS fp sig m => IOMode -> fp -> m Handle
 openFile ioMode fp = send $ OpenFile ioMode fp ret
 
-closeFile :: FS sig m => Handle -> m ()
-closeFile h = send $ CloseFile h (ret ())
+closeFile :: FS fp sig m => Proxy fp -> Handle -> m ()
+closeFile proxy h = send $ CloseFile proxy h (ret ())
 
-createDirectory :: FS sig m => RawFilePath -> m ()
+createDirectory :: FS fp sig m => fp -> m ()
 createDirectory fp = send $ CreateDirectory fp $ ret ()
 
-removeDirectory :: FS sig m => RawFilePath -> m ()
+removeDirectory :: FS fp sig m => fp -> m ()
 removeDirectory fp = send $ RemoveDirectory fp $ ret ()
 
-readFile :: FS sig m => RawFilePath -> m ByteString
+readFile :: FS fp sig m => fp -> m ByteString
 readFile fp = send $ ReadFile fp ret
 
-writeFile :: FS sig m => RawFilePath -> ByteString -> m ()
+writeFile :: FS fp sig m => fp -> ByteString -> m ()
 writeFile fp contents = send $ WriteFile fp contents $ ret ()
 
-listDirectory :: FS sig m => RawFilePath -> m [RawFilePath]
+listDirectory :: FS fp sig m => fp -> m [fp]
 listDirectory fp = send $ ListDirectory fp ret
 
-doesDirectoryExist :: FS sig m => RawFilePath -> m Bool
+doesDirectoryExist :: FS fp sig m => fp -> m Bool
 doesDirectoryExist fp = send $ DoesDirectoryExist fp ret
 
-deleteFile :: FS sig m => RawFilePath -> m ()
+deleteFile :: FS fp sig m => fp -> m ()
 deleteFile fp = send $ DeleteFile fp $ ret ()
 
-getCwd :: FS sig m => m RawFilePath
-getCwd = send $ GetCWD (ret :: FS sig m => RawFilePath -> m RawFilePath)
+getCwd :: FS fp sig m => m fp 
+getCwd = send $ GetCWD ret
 
-withFile :: (Member Filesystem sig, Member Resource sig, Carrier sig m) 
-         => IOMode -> RawFilePath -> (Handle -> m a) -> m a
-withFile mode fp = bracket (openFile mode fp) closeFile
+appendPath :: FS fp sig m => fp -> fp -> m fp
+appendPath fp1 fp2 = send $ AppendPath fp1 fp2 ret
+
+withFile :: forall fp sig m a. (Member (Filesystem fp) sig, Member Resource sig, Carrier sig m) 
+         => IOMode -> fp -> (Handle -> m a) -> m a
+withFile mode fp = let proxy = Proxy :: Proxy fp in
+  bracket (openFile mode fp) (closeFile proxy)
 

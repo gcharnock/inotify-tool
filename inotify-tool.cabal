@@ -48,7 +48,8 @@ library
                        DeriveFunctor,
                        KindSignatures,
                        MultiParamTypeClasses,
-                       TypeOperators 
+                       TypeOperators,
+                       ScopedTypeVariables 
   build-depends:       base >=4.10 && <4.12,
                        hinotify,
                        directory,
