@@ -19,8 +19,10 @@ library
   exposed-modules:     Actions.Directory,
                        Data.Object,
                        Data.Tree,
-                       Effects.Filesystem
-                       Effects.Filesystem.Posix
+                       Effects.Filesystem,
+                       Effects.Filesystem.Posix,
+                       Effects.FileWatcher,
+                       Effects.FileWatcher.INotify,
                        ObjectStore,
                        ObjectStore.Memory,
                        Context,

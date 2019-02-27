@@ -32,4 +32,5 @@ instance (MonadIO m, Carrier sig m) => Carrier (Filesystem :+: sig) (FsPosix m) 
               RemoveDirectory fp k -> liftIO (Posix.removeDirectory fp) >> k
               DeleteFile fp k -> liftIO (RFP.tryRemoveFile fp) >> k
               GetCWD k -> liftIO Posix.getWorkingDirectory >>= k
+              LiftDirectory fp k -> LiftIO RFP.listDirectory >>= k
 

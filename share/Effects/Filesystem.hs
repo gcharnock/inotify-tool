@@ -15,9 +15,13 @@ data Filesystem (m :: * -> *) k
   | CloseFile Handle k
   | ReadFile RawFilePath (BS.ByteString -> k)
   | WriteFile RawFilePath BS.ByteString k
-  | CreateDirectory RawFilePath k
-  | RemoveDirectory RawFilePath k
   | DeleteFile RawFilePath k
+
+  | CreateDirectory RawFilePath k
+  | ListDirectory RawFilePath ([RawFilePath] -> k)
+  | DoesDirectoryExist RawFilePath (Bool -> k)
+  | RemoveDirectory RawFilePath k
+
   | GetCWD (RawFilePath -> k)
   deriving (Functor)
 
@@ -30,9 +34,13 @@ instance Effect Filesystem where
          CloseFile h k -> CloseFile h $ handler $ k <$ state
          ReadFile fp k -> ReadFile fp $ handler . (<$ state) . k
          WriteFile fp contents k -> WriteFile fp contents $ handler $ k <$ state
-         CreateDirectory fp k -> CreateDirectory fp $ handler $ k <$ state
-         RemoveDirectory fp k -> RemoveDirectory fp $ handler $ k <$ state
          DeleteFile fp k -> DeleteFile fp $ handler $ k <$ state
+
+         CreateDirectory fp k -> CreateDirectory fp $ handler $ k <$ state
+         ListDirectory fp k -> ListDirectory fp $ handler . (<$ state) . k
+         RemoveDirectory fp k -> RemoveDirectory fp $ handler $ k <$ state
+         DoesDirectoryExist fp k -> DoesDirectoryExist fp $ handler . (<$ state) . k
+
          GetCWD k -> GetCWD $ handler . (<$ state) . k
 
 type FS sig m = (Member Filesystem sig, Carrier sig m)
@@ -54,6 +62,12 @@ readFile fp = send $ ReadFile fp ret
 
 writeFile :: FS sig m => RawFilePath -> ByteString -> m ()
 writeFile fp contents = send $ WriteFile fp contents $ ret ()
+
+listDirectory :: FS sig m => RawFilePath -> m [RawFilePath]
+listDirectory fp = send $ ListDirectory fp ret
+
+doesDirectoryExist :: FS sig m => RawFilePath -> m Bool
+doesDirectoryExist fp = send $ DoesDirectoryExist fp ret
 
 deleteFile :: FS sig m => RawFilePath -> m ()
 deleteFile fp = send $ DeleteFile fp $ ret ()
