@@ -2,3 +2,5 @@ dist/
 result
 .stack-work
 testdir/
+.idea/
+.vscode/
