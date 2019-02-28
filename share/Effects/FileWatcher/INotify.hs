@@ -18,24 +18,38 @@ import           Effects.FileWatcher
 import           System.INotify                 ( INotify, isDirectory, filePath, maybeFilePath )
 import qualified System.INotify                as INotify
 
-newtype WatcherINotify hDir fp m a = WatcherINotify { runWatcherINotify :: m a }
-  deriving (Functor, Applicative, Monad, MonadIO)
+newtype WatcherINotifyC hDir fp m a = WatcherINotifyC { runWatcherINotifyC :: INotify.INotify -> m a }
+  deriving (Functor)
 
-instance (MonadIO m, Member (Reader INotify) sig, Member (Filesystem fp) sig, Carrier sig m) 
-         => Carrier (FileWatcher hDir fp :+: sig) (WatcherINotify hDir fp m) where
-  ret = pure
-  eff = handleSum (WatcherINotify . eff . handleCoercible) $ cases 
-      where cases = \case
-              WatchDir hDir fp callback k -> inotifyWatchDir hDir fp callback >> k
+instance (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
+         => Carrier (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) where
+  ret a = WatcherINotifyC $ \_ -> return a
+  eff op = WatcherINotifyC $ \inotify ->
+               let cases = \case
+                      WatchDir hDir fp callback k -> runWatcherINotifyC (k inotify) _ --inotifyWatchDirectory hDir fp callback >> k
+               in handleSum (eff . handle (inotify, ()) mergeResults) _ op
+    
+    
+   -- WatcherINotifyC $ \inotify -> _
+         
+    
+    --handleSum (eff . handle inotify) $ \(WatchDir hDir fp callback k) -> inotifyWatchDirectory hDir fp callback >> k
 
 type INotifyImp fp sig m = (MonadIO m, Member (Reader INotify) sig, Member (Filesystem fp) sig, Carrier sig m) 
 
-inotifyWatchDir :: INotifyImp fp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m ()
-inotifyWatchDir hDir fp callback = do
-    inotify <- ask
-    undefined (inotify :: INotify) 
-    return ()
 
+mergeResults :: Monad m => (INotify.INotify, WatcherINotifyC hDir fp m a) -> _
+mergeResults (inotify, m) = do
+  a <- runWatcherINotifyC m inotify
+  return $ (inotify, m)
+
+runINotify :: forall hDir fp sig m a. (Carrier sig m, MonadIO m, Member (Filesystem fp) sig)
+           => Eff (WatcherINotifyC hDir fp m) a -> m a 
+runINotify program = do
+  inotify <- liftIO $ INotify.initINotify
+  a <- runWatcherINotifyC (interpret program) inotify
+  liftIO $ INotify.killINotify inotify
+  return a
 
 inotifyWatchDirectory :: INotifyImp fp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
 inotifyWatchDirectory hDir fp callback = do
@@ -46,7 +60,8 @@ inotifyWatchDirectory hDir fp callback = do
                    , INotify.Delete
                    , INotify.Create]
   inotify <- ask
-  watchDescriptor <- liftIO $ INotify.addWatch inotify watchTypes fp $ 
+  fp' <- toRawFilePath fp
+  watchDescriptor <- liftIO $ INotify.addWatch inotify watchTypes fp' $
     handleEvent hDir fp callback 
 
   diskFiles <- listDirectory fp
@@ -67,17 +82,18 @@ handleEvent hDir fp callback event =
     Left  e -> liftIO $ print (e :: SomeException)
     Right _ -> return ()
  where
-  handler = do
+  handler =
     case event of
-      INotify.Created { isDirectory, filePath = filename } -> do
+      INotify.Created { isDirectory, filePath = filename } ->
         if isDirectory
           then callback $ CreatedDir hDir fp
           else callback $ CreatedFile hDir fp
 
-      INotify.Modified { maybeFilePath } -> do
+      INotify.Modified { maybeFilePath } ->
         case maybeFilePath of
           Nothing -> return ()
-          Just filename -> callback $ ModifiedFile hDir filename 
+          Just filename ->
+            callback $ ModifiedFile hDir (error "how do defined this conversion?" filename)
 
       INotify.Deleted { filePath } -> return ()
 

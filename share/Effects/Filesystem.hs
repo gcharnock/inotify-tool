@@ -25,6 +25,9 @@ data Filesystem fp (m :: * -> *) k
   | AppendPath fp fp (fp -> k)
 
   | GetCWD (fp -> k)
+
+  | ToRawFilePath fp (BS.ByteString -> k)
+  | FromRawFilePath BS.ByteString (fp -> k)
   deriving (Functor)
 
 instance HFunctor (Filesystem fp) where
@@ -46,6 +49,9 @@ instance Effect (Filesystem fp) where
          AppendPath fp1 fp2 k -> AppendPath fp1 fp2 $ handler . (<$ state) . k
 
          GetCWD k -> GetCWD $ handler . (<$ state) . k
+
+         ToRawFilePath fp k -> ToRawFilePath fp $ handler . (<$ state) . k
+         FromRawFilePath rfp k -> FromRawFilePath rfp $ handler . (<$ state) . k
 
 type FS fp sig m = (Member (Filesystem fp) sig, Carrier sig m)
 
@@ -81,6 +87,12 @@ getCwd = send $ GetCWD ret
 
 appendPath :: FS fp sig m => fp -> fp -> m fp
 appendPath fp1 fp2 = send $ AppendPath fp1 fp2 ret
+
+toRawFilePath :: FS fp sig m => fp -> m ByteString
+toRawFilePath fp = send $ ToRawFilePath fp ret
+
+fromRawFilePath :: FS fp sig m => ByteString -> m fp
+fromRawFilePath fp = send $ FromRawFilePath fp ret
 
 withFile :: forall fp sig m a. (Member (Filesystem fp) sig, Member Resource sig, Carrier sig m) 
          => IOMode -> fp -> (Handle -> m a) -> m a
