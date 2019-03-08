@@ -19,34 +19,79 @@ import           Effects.FileWatcher
 import           System.INotify                 ( INotify, isDirectory, filePath, maybeFilePath )
 import qualified System.INotify                as INotify
 import Data.Proxy
+import Data.Coerce
+{-
+instance (Carrier sig m, Effect sig) => Carrier (Teletype :+: sig) (TeletypeRetC m) where
+  eff (L (Read    k)) = do
+    i <- TeletypeRetC get
+    case i of
+      []  -> k ""
+      h:t -> TeletypeRetC (put t) *> k h
+  eff (L (Write s k)) = TeletypeRetC (tell [s]) *> k
+eff (R other) = TeletypeRetC (eff (R (R (handleCoercible other))))
+
+handle :: Functor f => f () -> (forall x. f (m x) -> n (f x)) -> sig m (m a) -> sig n (n (f a)) 
+
+handleCoercible :: (HFunctor sig, Coercible f g) => sig f (f a) -> sig g (g a) 
+
+eff :: sig h (h a) -> h a 
+
+handleReader :: HFunctor sig => r -> (forall x. f x -> r -> g x) -> sig f (f a) -> sig g (g a) 
+-}
+
+
+handleCoercible' :: (HFunctor sig, Coercible (WatcherINotifyC hDir fp m) m) =>
+                          sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
+                          -> sig m (m a)
+handleCoercible' = handleCoercible
 
 newtype WatcherINotifyC hDir fp (m :: * -> *) (a :: *) = 
   WatcherINotifyC { runWatcherINotifyC :: INotify.INotify -> m a }
   deriving (Functor)
 
-instance (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
+instance Applicative m => Applicative (WatcherINotifyC hDir fp (m :: * -> *)) where
+  pure a = WatcherINotifyC $ \_ -> pure a
+  a <*> b = WatcherINotifyC $ \i -> (runWatcherINotifyC a) i <*> (runWatcherINotifyC b) i
+
+instance forall m fp sig hDir. (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
          => Carrier (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) where
   ret a = WatcherINotifyC $ \_ -> return a
-  eff op = eff' op
+  eff = eff'
 
-eff' :: (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
-     => (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a) 
-     -> WatcherINotifyC hDir fp m a
-eff' op = handleSum left right op
 
-left :: forall sig hDir fp (m :: * -> *) (a :: *).
-     sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
-     -> WatcherINotifyC hDir fp m a
-left op =
-  let h = handleCoercible :: (HFunctor sig)
-                          => (forall (x :: *). (WatcherINotifyC hDir fp m x) -> m x)
-                          -> sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
-                          -> sig m (m a)
-  in WatcherINotifyC $ \_ -> _
-
-right :: FileWatcher hDir fp (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
+eff' :: forall m fp sig hDir a. (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
+      => (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a) 
       -> WatcherINotifyC hDir fp m a
-right op = _
+eff' (L (WatchDir dir fp callback k)) = (WatcherINotifyC $ \inotify -> inotifyWatchDirectory inotify dir fp callback) *> k 
+eff' (R op) = WatcherINotifyC $ \inotify -> eff'' (handle' inotify op)
+                where 
+                  handle' :: forall a. INotify.INotify ->
+                      sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
+                      -> sig m (m a)
+                  handle' inotify = handleReader inotify runWatcherINotifyC
+                  eff'' :: sig m (m a)
+                          -> m a
+                  eff'' = eff 
+
+
+-- eff' :: (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
+--      => (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a) 
+--      -> WatcherINotifyC hDir fp m a
+-- eff' op = handleSum left right op
+-- 
+-- left :: forall sig hDir fp (m :: * -> *) (a :: *).
+--      sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
+--      -> WatcherINotifyC hDir fp m a
+-- left op =
+--   let h = handleCoercible :: (HFunctor sig)
+--                           => (forall (x :: *). (WatcherINotifyC hDir fp m x) -> m x)
+--                           -> sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
+--                           -> sig m (m a)
+--   in WatcherINotifyC $ \_ -> _
+-- 
+-- right :: FileWatcher hDir fp (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
+--       -> WatcherINotifyC hDir fp m a
+-- right op = _
 
     
    {- WatcherINotifyC $ \inotify ->
@@ -60,7 +105,7 @@ right op = _
     
     --handleSum (eff . handle inotify) $ \(WatchDir hDir fp callback k) -> inotifyWatchDirectory hDir fp callback >> k
 
-type INotifyImp fp sig m = (MonadIO m, Member (Reader INotify) sig, Member (Filesystem fp) sig, Carrier sig m) 
+type INotifyImp fp sig m = (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
 
 
 -- mergeResults :: Monad m => (INotify.INotify, WatcherINotifyC hDir fp m a) -> _
@@ -76,15 +121,14 @@ runINotify program = do
   liftIO $ INotify.killINotify inotify
   return a
 
-inotifyWatchDirectory :: INotifyImp fp sig m => hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
-inotifyWatchDirectory hDir fp callback = do
+inotifyWatchDirectory :: INotifyImp fp sig m => INotify.INotify -> hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
+inotifyWatchDirectory inotify hDir fp callback = do
   let watchTypes = [ INotify.Modify
                    , INotify.Attrib
                    , INotify.Move
                    , INotify.MoveOut
                    , INotify.Delete
                    , INotify.Create]
-  inotify <- ask
   fp' <- toRawFilePath fp
   watchDescriptor <- liftIO $ INotify.addWatch inotify watchTypes fp' $
     handleEvent hDir fp callback 
@@ -95,7 +139,7 @@ inotifyWatchDirectory hDir fp callback = do
     filepath <- fp `appendPath` filename
     isDirectory <- doesDirectoryExist filepath
     if isDirectory
-      then void $ inotifyWatchDirectory (error "no sub hdir yet") filepath callback
+      then void $ inotifyWatchDirectory inotify (error "no sub hdir yet") filepath callback
       else liftIO $ callback $ CreatedFile hDir filepath
   
   return watchDescriptor
