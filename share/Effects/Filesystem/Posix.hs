@@ -46,5 +46,5 @@ instance (MonadIO m, Carrier sig m) => Carrier (Filesystem RFP.RawFilePath :+: s
       ToRawFilePath   fp k -> k fp
       FromRawFilePath fp k -> k fp
 
-runFsPosix :: (Carrier sig m, Effect sig, Monad m) => Eff (FsPosixC m) a -> m a
+runFsPosix :: (Carrier sig m, Effect sig, MonadIO m) => Eff (FsPosixC m) a -> m a
 runFsPosix program = runFsPosixC (interpret program)

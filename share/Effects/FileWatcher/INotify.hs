@@ -65,7 +65,8 @@ eff' (R op) = WatcherINotifyC $ \inotify -> eff (handleReader inotify runWatcher
 
 type INotifyImp fp sig m = (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
 
-runINotify :: forall hDir fp sig m a. (Carrier sig m, MonadIO m, Member (Filesystem fp) sig)
+runINotify :: forall hDir fp sig m a.
+           INotifyImp fp sig m
            => Eff (WatcherINotifyC hDir fp m) a -> m a 
 runINotify program = do
   inotify <- liftIO $ INotify.initINotify
