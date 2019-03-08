@@ -9,7 +9,6 @@ import           Control.Monad.IO.Class
 import           Control.Exception (try, SomeException)
 
 import           Control.Effect
-import           Control.Effect.Reader
 import           Control.Effect.Carrier
 import           Control.Effect.Sum
 
@@ -18,7 +17,6 @@ import           Effects.FileWatcher
 
 import           System.INotify                 ( INotify, isDirectory, filePath, maybeFilePath )
 import qualified System.INotify                as INotify
-import Data.Proxy
 import Data.Coerce
 {-
 instance (Carrier sig m, Effect sig) => Carrier (Teletype :+: sig) (TeletypeRetC m) where
@@ -58,60 +56,14 @@ instance forall m fp sig hDir. (MonadIO m, Member (Filesystem fp) sig, Carrier s
   ret a = WatcherINotifyC $ \_ -> return a
   eff = eff'
 
-
 eff' :: forall m fp sig hDir a. (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
       => (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a) 
       -> WatcherINotifyC hDir fp m a
 eff' (L (WatchDir dir fp callback k)) = (WatcherINotifyC $ \inotify -> inotifyWatchDirectory inotify dir fp callback) *> k 
-eff' (R op) = WatcherINotifyC $ \inotify -> eff'' (handle' inotify op)
-                where 
-                  handle' :: forall a. INotify.INotify ->
-                      sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
-                      -> sig m (m a)
-                  handle' inotify = handleReader inotify runWatcherINotifyC
-                  eff'' :: sig m (m a)
-                          -> m a
-                  eff'' = eff 
+eff' (R op) = WatcherINotifyC $ \inotify -> eff (handleReader inotify runWatcherINotifyC op)
 
-
--- eff' :: (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
---      => (FileWatcher hDir fp :+: sig) (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a) 
---      -> WatcherINotifyC hDir fp m a
--- eff' op = handleSum left right op
--- 
--- left :: forall sig hDir fp (m :: * -> *) (a :: *).
---      sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
---      -> WatcherINotifyC hDir fp m a
--- left op =
---   let h = handleCoercible :: (HFunctor sig)
---                           => (forall (x :: *). (WatcherINotifyC hDir fp m x) -> m x)
---                           -> sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
---                           -> sig m (m a)
---   in WatcherINotifyC $ \_ -> _
--- 
--- right :: FileWatcher hDir fp (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
---       -> WatcherINotifyC hDir fp m a
--- right op = _
-
-    
-   {- WatcherINotifyC $ \inotify ->
-               let cases = \case
-                      WatchDir hDir fp callback k -> runWatcherINotifyC (k inotify) _ --inotifyWatchDirectory hDir fp callback >> k
-               in handleSum (eff . handle (inotify, ()) mergeResults) _ op-}
-    
-    
-   -- WatcherINotifyC $ \inotify -> _
-         
-    
-    --handleSum (eff . handle inotify) $ \(WatchDir hDir fp callback k) -> inotifyWatchDirectory hDir fp callback >> k
 
 type INotifyImp fp sig m = (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
-
-
--- mergeResults :: Monad m => (INotify.INotify, WatcherINotifyC hDir fp m a) -> _
--- mergeResults (inotify, m) = do
---   a <- runWatcherINotifyC m inotify
---   return $ (inotify, m)
 
 runINotify :: forall hDir fp sig m a. (Carrier sig m, MonadIO m, Member (Filesystem fp) sig)
            => Eff (WatcherINotifyC hDir fp m) a -> m a 
