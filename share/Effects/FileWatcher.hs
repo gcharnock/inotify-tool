@@ -11,6 +11,7 @@ data FileEvent dir fp
     | CreatedFile dir fp
     | ModifiedFile dir fp
     | DeletedFile dir fp
+    deriving (Show)
 
 data FileWatcher dir fp (m :: * -> *) k
     = WatchDir dir fp (FileEvent dir fp -> IO ()) k

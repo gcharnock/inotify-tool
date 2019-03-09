@@ -9,7 +9,8 @@ import           Control.Monad.Trans.Reader
 import           Network.Socket
 import qualified Data.Tree as Tree
 import           ObjectStore
-import           Logging.Contextual 
+import           Logging.Contextual
+import           Logging.Contextual.BasicScheme
 import           Utils
 import           RawFilePath.Directory         (RawFilePath)
 import qualified RawFilePath.Directory         as RFP
@@ -57,15 +58,16 @@ runApp = do
 main :: IO ()
 main = do
   let loggerSettings = LoggerSettings {
-    lsHostname = "127.0.0.1",
+    lsHostname = "log.docker",
     lsPort = 5432,
     lsUsername = "postgres",
-    lsPassword = "",
+    lsPassword = "dev",
     lsWriterCount = 1,
-    lsDbName = "log"
+    lsDbName = "postgres"
   }
   withLogger loggerSettings (LogEvent "whd-app" Nothing) $ \logger ->
     flip runReaderT logger $ do
+      [logHeadline|Starting app|]
       objectStore <- newInMemoryStore
       rootTree    <- Tree.new
       (liftIO RFP.getHomeDirectory) >>= \case

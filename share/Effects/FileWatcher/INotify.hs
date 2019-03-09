@@ -17,7 +17,8 @@ import           Effects.FileWatcher
 
 import           System.INotify                 ( INotify, isDirectory, filePath, maybeFilePath )
 import qualified System.INotify                as INotify
-import Data.Coerce
+import           Data.Coerce
+import           Control.Concurrent
 {-
 instance (Carrier sig m, Effect sig) => Carrier (Teletype :+: sig) (TeletypeRetC m) where
   eff (L (Read    k)) = do
@@ -37,11 +38,6 @@ eff :: sig h (h a) -> h a
 handleReader :: HFunctor sig => r -> (forall x. f x -> r -> g x) -> sig f (f a) -> sig g (g a) 
 -}
 
-
-handleCoercible' :: (HFunctor sig, Coercible (WatcherINotifyC hDir fp m) m) =>
-                          sig (WatcherINotifyC hDir fp m) (WatcherINotifyC hDir fp m a)
-                          -> sig m (m a)
-handleCoercible' = handleCoercible
 
 newtype WatcherINotifyC hDir fp (m :: * -> *) (a :: *) = 
   WatcherINotifyC { runWatcherINotifyC :: INotify.INotify -> m a }
@@ -69,12 +65,15 @@ runINotify :: forall hDir fp sig m a.
            INotifyImp fp sig m
            => Eff (WatcherINotifyC hDir fp m) a -> m a 
 runINotify program = do
+  liftIO $ putStrLn "init inotify"
   inotify <- liftIO $ INotify.initINotify
   a <- runWatcherINotifyC (interpret program) inotify
   liftIO $ INotify.killINotify inotify
+  liftIO $ putStrLn "finalize inotify"
   return a
 
-inotifyWatchDirectory :: INotifyImp fp sig m => INotify.INotify -> hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
+inotifyWatchDirectory :: INotifyImp fp sig m
+                      => INotify.INotify -> hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
 inotifyWatchDirectory inotify hDir fp callback = do
   let watchTypes = [ INotify.Modify
                    , INotify.Attrib
@@ -83,8 +82,9 @@ inotifyWatchDirectory inotify hDir fp callback = do
                    , INotify.Delete
                    , INotify.Create]
   fp' <- toRawFilePath fp
+  liftIO $ print fp'
   watchDescriptor <- liftIO $ INotify.addWatch inotify watchTypes fp' $
-    handleEvent hDir fp callback 
+    handleEvent hDir fp (\e -> void $ forkIO $ callback e)
 
   diskFiles <- listDirectory fp
 
@@ -97,14 +97,15 @@ inotifyWatchDirectory inotify hDir fp callback = do
   
   return watchDescriptor
 
-
-handleEvent :: hDir -> fp -> (FileEvent hDir fp -> IO ()) -> INotify.Event -> IO ()
-handleEvent hDir fp callback event =
-  try handler >>= \case
+installPrintHandler :: IO () -> IO ()
+installPrintHandler action = try action >>= \case
     Left  e -> liftIO $ print (e :: SomeException)
     Right _ -> return ()
- where
-  handler =
+
+
+handleEvent :: hDir -> fp -> (FileEvent hDir fp -> IO ()) -> INotify.Event -> IO ()
+handleEvent hDir fp callback event = installPrintHandler $ do
+    print event
     case event of
       INotify.Created { isDirectory, filePath = filename } ->
         if isDirectory
@@ -119,5 +120,5 @@ handleEvent hDir fp callback event =
 
       INotify.Deleted { filePath } -> return ()
 
-      _ -> return ()
+      e -> liftIO $ print e
 
