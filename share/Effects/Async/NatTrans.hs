@@ -14,8 +14,10 @@ import           Control.Effect.Sum
 
 import           Effects.Async
 
+import           Data.Proxy
+
 import           Data.Coerce
-import           Control.Concurrent.Async
+import qualified Control.Concurrent.Async as A
 
 newtype ToIO m = ToIO { unToIO :: forall x. m x -> IO x}
 
@@ -40,10 +42,16 @@ instance (MonadIO m, Carrier sig m)
 eff' :: (MonadIO m, Carrier sig m) 
       => (AsyncEff n b :+: sig) (NatTransC n b m) (NatTransC n b m a) 
       -> NatTransC n b m a
-eff' (L (AsyncEff action k)) = (NatTransC $ \nat -> liftIO . async . unToIO nat $ action) >>= k 
-eff' (R op) = NatTransC $ \nat -> eff (handleReader nat runNatTransC op)
+eff' (R op) = NatTransC $ \nat -> eff (handleReader nat runNatTransC op)        
+eff' (L (AsyncEff action k)) = (NatTransC $ \nat ->
+                                  fmap (Async :: A.Async a -> Async n a) . liftIO . A.async . unToIO nat $ action) >>= k 
+eff' (L (WaitEff (Async async) k)) = (NatTransC $ \nat -> liftIO . A.wait $ async) >>= k 
 
 
-type INotifyImp fp sig m = (MonadIO m, Carrier sig m) 
+runNatTrans :: (MonadIO m, Carrier sig m)
+           => Proxy b
+           -> (forall x. n x -> IO x)
+           -> Eff (NatTransC n b m) a -> m a 
+runNatTrans _ trans program = runNatTransC (interpret program) (ToIO trans)
 
 

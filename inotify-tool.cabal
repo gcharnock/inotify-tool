@@ -47,6 +47,7 @@ library
                        KindSignatures,
                        MultiParamTypeClasses,
                        TypeOperators,
+                       Rank2Types,
                        ScopedTypeVariables 
   hs-source-dirs:      share
   build-depends:       base >=4.10 && <4.12,

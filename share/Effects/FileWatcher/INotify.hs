@@ -59,10 +59,10 @@ eff' (L (WatchDir dir fp callback k)) = (WatcherINotifyC $ \inotify -> inotifyWa
 eff' (R op) = WatcherINotifyC $ \inotify -> eff (handleReader inotify runWatcherINotifyC op)
 
 
-type INotifyImp fp sig m = (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
+type INotifyC fp sig m = (MonadIO m, Member (Filesystem fp) sig, Carrier sig m) 
 
 runINotify :: forall hDir fp sig m a.
-           INotifyImp fp sig m
+           INotifyC fp sig m
            => Eff (WatcherINotifyC hDir fp m) a -> m a 
 runINotify program = do
   liftIO $ putStrLn "init inotify"
@@ -72,7 +72,7 @@ runINotify program = do
   liftIO $ putStrLn "finalize inotify"
   return a
 
-inotifyWatchDirectory :: INotifyImp fp sig m
+inotifyWatchDirectory :: INotifyC fp sig m
                       => INotify.INotify -> hDir -> fp -> (FileEvent hDir fp -> IO ()) -> m INotify.WatchDescriptor
 inotifyWatchDirectory inotify hDir fp callback = do
   let watchTypes = [ INotify.Modify
