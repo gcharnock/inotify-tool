@@ -1,0 +1,11 @@
+resolver: lts-12.26
+
+extra-deps:
+  - fused-effects-0.2.0.1
+
+packages:
+  - '.'
+  - '../contextual-logger/haskell'
+
+nix:
+  packages: [postgresql, zlib]
