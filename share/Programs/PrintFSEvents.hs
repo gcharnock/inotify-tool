@@ -22,7 +22,7 @@ import qualified Data.ByteString as BS
 
 type P sig m = ( MonadIO m
                , Member (FileWatcher () BS.ByteString) sig
-               , Member (AsyncEff IO Int) sig
+               , Member (AsyncEff IO) sig
                , Carrier sig m)
   
 program :: P sig m => m ()
