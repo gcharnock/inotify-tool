@@ -26,10 +26,10 @@ instance Effect (AsyncEff n) where
          AsyncEff action k -> AsyncEff action $ handler . (<$ state) . k
          WaitEff async k -> WaitEff async $ handler . (<$ state) . k
 
-type CAsyncEff n sig m = (Member (AsyncEff n) sig, Carrier sig m)
+type CAsyncEff sig' n sig m = (Member (AsyncEff n) sig, Carrier sig m, Carrier sig' n)
 
-forkEff :: (CAsyncEff n sig m) => n a -> m (Async n a)
+forkEff :: (CAsyncEff sig' n sig m) => n a -> m (Async n a)
 forkEff action = send $ AsyncEff action ret
 
-waitEff :: (CAsyncEff n sig m) => (Async n a) -> m a
+waitEff :: (CAsyncEff sig' n sig m) => (Async n a) -> m a
 waitEff async = send $ WaitEff async ret

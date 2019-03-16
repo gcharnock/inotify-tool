@@ -49,9 +49,8 @@ eff' (L (WaitEff (Async async) k)) = (NatTransC $ \nat -> liftIO . A.wait $ asyn
 
 
 runNatTrans :: (MonadIO m, Carrier sig m)
-           => Proxy b
-           -> (forall x. n x -> IO x)
+           => (forall x. n x -> IO x)
            -> Eff (NatTransC n m) a -> m a 
-runNatTrans _ trans program = runNatTransC (interpret program) (ToIO trans)
+runNatTrans trans program = runNatTransC (interpret program) (ToIO trans)
 
 
